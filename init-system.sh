@@ -8,30 +8,26 @@ fi
 
 echo "🚀 Iniciando configuración del sistema..."
 
-# Instalar solo ffmpeg si no está instalado
-if ! command -v ffmpeg &> /dev/null; then
-    echo "📦 Instalando ffmpeg..."
-    apt-get update
-    apt-get install -y ffmpeg
+# Detener el servicio si existe
+if systemctl is-active --quiet srt-player; then
+    echo "🛑 Deteniendo servicio existente..."
+    systemctl stop srt-player
 fi
 
-# Verificar versión de Python
-PYTHON_VERSION=$(python3 --version)
-echo "ℹ️ Usando $PYTHON_VERSION"
+# Instalar dependencias del sistema
+echo "📦 Instalando dependencias del sistema..."
+apt-get update
+apt-get install -y \
+    ffmpeg \
+    python3-requests \
+    python3-pip \
+    python3-full \
+    python3-opencv \
+    python3-numpy
 
-# Instalar pip si no está instalado
-if ! command -v pip3 &> /dev/null; then
-    echo "📦 Instalando pip..."
-    apt-get install -y python3-pip
-fi
-
-# Instalar requests explícitamente
-echo "📦 Instalando requests..."
-pip3 install requests
-
-# Instalar requisitos de Python
-echo "📦 Instalando otras dependencias de Python..."
-pip3 install -r requirements.txt
+# Verificar instalación
+echo "✅ Verificando instalación de Python y módulos..."
+python3 -c "import requests; import cv2; import numpy; print('Módulos instalados correctamente')"
 
 # 1. Servicio del player
 echo "🔧 Configurando servicio del player..."
@@ -89,6 +85,9 @@ echo "▶️ Iniciando servicios..."
 systemctl start disable-cursor
 systemctl start srt-player
 
+# 7. Mostrar estado
+echo "📊 Estado del servicio:"
+systemctl status srt-player
+
 echo "✨ Instalación completada!"
-echo "Para ver el estado del servicio: systemctl status srt-player"
-echo "Para ver los logs: journalctl -u srt-player -f"
+echo "Para ver los logs en tiempo real: journalctl -u srt-player -f"
