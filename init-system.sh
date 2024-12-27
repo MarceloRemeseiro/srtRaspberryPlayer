@@ -11,10 +11,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/opt/srt-player-python
-Environment=PYTHONPATH=/opt/srt-player-python
-ExecStart=/usr/local/bin/python src/main.py
+User=root
+WorkingDirectory=/root/srtRaspberryPlayer
+Environment=PYTHONPATH=/root/srtRaspberryPlayer
+ExecStart=/usr/bin/python3 src/main.py
 Restart=always
 RestartSec=3
 
