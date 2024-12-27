@@ -43,9 +43,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$(pwd)
-Environment=PYTHONPATH=$(pwd)
-ExecStart=/usr/bin/python3 src/main.py
+WorkingDirectory=/root/srtRaspberryPlayer
+Environment=PYTHONPATH=/root/srtRaspberryPlayer/src
+ExecStart=/usr/bin/python3 -u src/main.py
 Restart=always
 RestartSec=3
 
