@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  srt-player:
+    image: ghcr.io/marceloremeseiro/srtraspberryplayercontainer:latest
+    container_name: srt-player
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/fb0:/dev/fb0
+    volumes:
+      - /sys/class/graphics:/sys/class/graphics
+    environment:
+      - TZ=Europe/Madrid    # Ajusta a tu zona horaria 
