@@ -19,9 +19,19 @@ fi
 PYTHON_VERSION=$(python3 --version)
 echo "ℹ️ Usando $PYTHON_VERSION"
 
+# Instalar pip si no está instalado
+if ! command -v pip3 &> /dev/null; then
+    echo "📦 Instalando pip..."
+    apt-get install -y python3-pip
+fi
+
+# Instalar requests explícitamente
+echo "📦 Instalando requests..."
+pip3 install requests
+
 # Instalar requisitos de Python
-echo "📦 Instalando dependencias de Python..."
-python3 -m pip install -r requirements.txt
+echo "📦 Instalando otras dependencias de Python..."
+pip3 install -r requirements.txt
 
 # 1. Servicio del player
 echo "🔧 Configurando servicio del player..."
