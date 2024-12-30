@@ -62,8 +62,11 @@ class StreamManager:
             '-vf', 'scale=1920:1080',
             '-pix_fmt', 'rgb565',
             '-f', 'fbdev',
-            '-y',
-            '/dev/fb0'
+            '-y', '/dev/fb0',
+            '-f', 'alsa',
+            '-ac', '2',
+            '-ar', '48000',
+            'default'
         ]
         
         try:

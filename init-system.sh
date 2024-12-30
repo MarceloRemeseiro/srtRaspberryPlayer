@@ -89,5 +89,41 @@ systemctl start srt-player
 echo "📊 Estado del servicio:"
 systemctl status srt-player
 
+# Configurar audio
+echo "🔊 Configurando audio HDMI..."
+apt-get install -y alsa-utils
+
+# Configurar ALSA
+echo "Configurando ALSA..."
+cat > /etc/asound.conf << EOF
+pcm.!default {
+    type hw
+    card 0
+    device 1
+}
+
+ctl.!default {
+    type hw
+    card 0
+}
+EOF
+
+# Habilitar módulos de sonido
+echo "Habilitando módulos de sonido..."
+cat >> /boot/config.txt << EOF
+
+# Audio configuration
+dtparam=audio=on
+dtoverlay=vc4-kms-v3d
+dtoverlay=vc4-fkms-v3d
+EOF
+
+# Configurar audio por defecto
+echo "Configurando audio por defecto..."
+cat > /etc/modprobe.d/alsa-base.conf << EOF
+options snd-bcm2835 index=0
+EOF
+
 echo "✨ Instalación completada!"
 echo "Para ver los logs en tiempo real: journalctl -u srt-player -f"
+echo "⚠️ IMPORTANTE: Por favor, reinicia la Raspberry Pi para aplicar la configuración de audio"
