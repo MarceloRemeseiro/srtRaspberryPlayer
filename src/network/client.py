@@ -122,17 +122,15 @@ def register_with_streaming_server(server_url):
         register_url = f'{server_url}api/devices'
         log("STREAMING", "info", f"Actualizando estado en: {register_url}")
         
-        # Datos para crear/actualizar el dispositivo
         data = {
             'dispositivoId': DEVICE_ID,
             'nombre': f'Raspberry {DEVICE_ID}',
             'inputSrt': 'pending',
-            'ipPublica': get_public_ip()
+            'ipPublica': '0.0.0.0'  # Valor por defecto temporal
         }
         
         response = requests.post(register_url, json=data, timeout=5)
         
-        # El 409 (Conflict) no es un error, significa que el dispositivo existe
         if response.status_code not in [200, 409]:
             log("STREAMING", "error", f"Error {response.status_code}: {response.text}")
             device_status = 'OFFLINE'
@@ -144,25 +142,25 @@ def register_with_streaming_server(server_url):
         if result.get('success'):
             device_status = result.get('status', 'ONLINE')
             
+            # Actualizar URL SRT si está disponible
             if result.get('streamingUrl'):
                 current_srt_url = result.get('streamingUrl')
-                if current_srt_url and current_srt_url != 'pending':
-                    device_status = 'ACTIVE'
-                    log("STREAMING", "success", f"URL SRT asignada: {current_srt_url}")
-                else:
-                    log("STREAMING", "info", "Esperando asignación de URL SRT")
+                log("STREAMING", "success", f"URL SRT asignada: {current_srt_url}")
+                device_status = 'ACTIVE'
             
             log("STREAMING", "success", f"Estado: {device_status}")
             return True
             
         else:
             device_status = 'OFFLINE'
+            current_srt_url = None
             log("STREAMING", "error", f"Error: {result.get('error', 'Sin mensaje')}")
             return False
         
     except Exception as e:
         log("STREAMING", "error", f"Error en registro: {e}")
         device_status = 'OFFLINE'
+        current_srt_url = None
         return False
 
 def register_device(status='ONLINE'):
@@ -218,18 +216,16 @@ def get_srt_url():
     """Función principal para obtener la URL SRT"""
     global current_srt_url, device_status
     
-    # Solo intentamos obtener URL si estamos registrados en el proxy
-    if device_status != 'assigned':
-        log("SRT", "info", f"No consultando SRT - dispositivo no asignado (Estado: {device_status})")
-        return None
-    
-    # Actualizamos estado
+    # Actualizamos estado si es necesario
     if should_check_proxy():
-        if not register_device():
-            current_srt_url = None
-            return None
+        register_device()
     
-    return current_srt_url
+    # Verificamos si tenemos URL y estado válido
+    if current_srt_url and device_status in ['ACTIVE', 'assigned']:
+        return current_srt_url
+    
+    log("SRT", "info", f"No hay URL SRT disponible - Estado: {device_status}")
+    return None
 
 def should_check_proxy():
     """Determina si es hora de actualizar el estado"""
