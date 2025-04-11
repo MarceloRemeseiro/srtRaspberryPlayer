@@ -3,6 +3,9 @@ from pathlib import Path
 import subprocess
 import uuid
 
+# Detectar entorno de desarrollo
+IS_DEV = os.uname().sysname == 'Darwin'  # True si estamos en macOS
+
 # Rutas base
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ASSETS_DIR = BASE_DIR / 'assets'
@@ -43,10 +46,10 @@ DEVICE_ID = get_device_id()
 print(f"Iniciando con DEVICE_ID: {DEVICE_ID}")
 
 # URL del servidor proxy local - AJUSTA ESTO A LA IP DE TU SERVIDOR
-# Para desarrollo local (pruebas):
-# PROXY_URL = 'http://localhost:3000'
-# Para producción (reemplaza con la IP o dominio de tu servidor):
-PROXY_URL = 'http://192.168.1.51:3000'
+if IS_DEV:
+    PROXY_URL = 'http://localhost:3000'  # URL para desarrollo
+else:
+    PROXY_URL = 'http://192.168.1.51:3000'  # URL para producción
 
 # Intervalos de consulta (en segundos)
 PROXY_CHECK_INTERVAL = 60   # Consultar servidor proxy cada 60 segundos
