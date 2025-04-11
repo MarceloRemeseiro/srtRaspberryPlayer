@@ -3,8 +3,7 @@ import subprocess
 import threading
 from config.settings import CONFIG_CHECK_INTERVAL
 from display.screen import show_default_image
-from network.client import register_device, get_srt_url
-from utils.logger import log
+from network.client import register_device, get_srt_url, log
 
 class StreamManager:
     def __init__(self):
