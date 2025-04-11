@@ -11,27 +11,28 @@ class StreamManager:
         self.last_config_check = time.time()
         self.last_srt_url = None
         self.kill_timeout = 5  # segundos para matar FFmpeg
+        self.connection_timeout = 10  # Tiempo máximo para esperar conexión SRT
 
     def stop_ffmpeg(self):
         """Detiene FFmpeg de forma más eficiente"""
         if self.ffmpeg_process:
             try:
-                log("FFMPEG", "info", "Enviando señal de terminación a FFmpeg")
+                log("FFMPEG", "info", "Deteniendo FFmpeg")
                 self.ffmpeg_process.terminate()
                 
                 # Esperar un tiempo razonable para que termine
                 start_time = time.time()
                 while time.time() - start_time < self.kill_timeout:
                     if self.ffmpeg_process.poll() is not None:
-                        log("FFMPEG", "info", "FFmpeg terminado correctamente")
                         break
                     time.sleep(0.1)
                 
                 # Si no ha terminado, lo matamos
                 if self.ffmpeg_process.poll() is None:
-                    log("FFMPEG", "warning", "FFmpeg no respondió, forzando cierre")
                     self.ffmpeg_process.kill()
                     self.ffmpeg_process.wait()
+                
+                show_default_image()  # Mostrar imagen por defecto al detener
                 
             except Exception as e:
                 log("FFMPEG", "error", f"Error deteniendo FFmpeg: {e}")
@@ -47,14 +48,19 @@ class StreamManager:
             srt_url = get_srt_url()
             self.last_config_check = current_time
             
-            if srt_url:
-                if srt_url != self.last_srt_url:
-                    log("STREAM", "info", f"Nueva URL detectada, cambiando stream")
-                    self.last_srt_url = srt_url
-                    # Detener FFmpeg antes de iniciar nueva URL
+            if not srt_url:
+                if self.last_srt_url is not None:
+                    log("STREAM", "warning", "Sin URL SRT configurada")
+                    self.last_srt_url = None
                     self.stop_ffmpeg()
-                    # Iniciar nuevo stream inmediatamente
-                    self._start_ffmpeg(srt_url)
+                    show_default_image()
+                    register_device('NO REPRODUCIENDO')
+                return
+            
+            if srt_url != self.last_srt_url:
+                log("STREAM", "info", f"Nueva URL detectada")
+                self.last_srt_url = srt_url
+                self._start_ffmpeg(srt_url)
             else:
                 if self.last_srt_url is not None:
                     log("STREAM", "warning", "URL SRT removida")
@@ -63,9 +69,15 @@ class StreamManager:
                     show_default_image()
                     register_device('NO REPRODUCIENDO')
         
-        # Si FFmpeg no está corriendo pero tenemos URL, reiniciar
-        if self.last_srt_url and (not self.ffmpeg_process or self.ffmpeg_process.poll() is not None):
-            self._start_ffmpeg(self.last_srt_url)
+        # Verificar si FFmpeg sigue vivo
+        if self.ffmpeg_process and self.ffmpeg_process.poll() is not None:
+            log("FFMPEG", "warning", "FFmpeg terminó inesperadamente")
+            show_default_image()
+            register_device('NO REPRODUCIENDO')
+            self.ffmpeg_process = None
+            # Intentar reiniciar si tenemos URL
+            if self.last_srt_url:
+                self._start_ffmpeg(self.last_srt_url)
 
     def _start_ffmpeg(self, srt_url):
         """Inicia FFmpeg con la URL dada"""
@@ -98,14 +110,46 @@ class StreamManager:
                 universal_newlines=True
             )
             
-            log("FFMPEG", "success", "Proceso iniciado")
-            register_device('REPRODUCIENDO')
+            # Esperar a que FFmpeg conecte o falle
+            start_time = time.time()
+            while time.time() - start_time < self.connection_timeout:
+                if self.ffmpeg_process.poll() is not None:
+                    # FFmpeg terminó, probablemente error
+                    error = self.ffmpeg_process.stderr.read()
+                    log("FFMPEG", "error", f"FFmpeg falló: {error}")
+                    show_default_image()
+                    register_device('NO REPRODUCIENDO')
+                    self.ffmpeg_process = None
+                    return False
+                
+                # Verificar si hay datos en stderr
+                error_line = self.ffmpeg_process.stderr.readline()
+                if error_line:
+                    if "Connection refused" in error_line or "Failed to connect" in error_line:
+                        log("FFMPEG", "error", "No se pudo conectar al stream SRT")
+                        self.stop_ffmpeg()
+                        show_default_image()
+                        return False
+                    elif "Stream mapping" in error_line:
+                        # FFmpeg conectó exitosamente
+                        log("FFMPEG", "success", "Stream SRT conectado")
+                        register_device('REPRODUCIENDO')
+                        return True
+                
+                time.sleep(0.1)
+            
+            # Si llegamos aquí, timeout
+            log("FFMPEG", "error", "Timeout esperando conexión SRT")
+            self.stop_ffmpeg()
+            show_default_image()
+            return False
             
         except Exception as e:
             log("FFMPEG", "error", f"Error iniciando FFmpeg: {e}")
             show_default_image()
             register_device('NO REPRODUCIENDO')
             self.ffmpeg_process = None
+            return False
 
     def _start_output_monitor(self):
         """Monitorea la salida de FFmpeg en tiempo real"""
