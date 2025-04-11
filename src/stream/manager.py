@@ -26,66 +26,30 @@ class StreamManager:
             srt_url = get_srt_url()
             self.last_config_check = current_time
             
-            if srt_url:
-                if srt_url != self.last_srt_url:
-                    log("STREAM", "info", f"Nueva URL detectada: {srt_url}")
-                    self.last_srt_url = srt_url
-                    if self.ffmpeg_process:
-                        self.stop_ffmpeg()
-            else:
-                self.last_srt_url = None
-                self.stop_ffmpeg()
-                show_default_image()
-                register_device('NO REPRODUCIENDO')
-                log("STREAM", "warning", "No hay SRT configurado")
-                return
+            # Si no hay URL o cambió la URL
+            if not srt_url or srt_url != self.last_srt_url:
+                # Detener reproducción actual
+                if self.ffmpeg_process:
+                    self.stop_ffmpeg()
+                    show_default_image()
+                
+                # Actualizar URL
+                self.last_srt_url = srt_url
+                
+                if not srt_url:
+                    register_device('NO REPRODUCIENDO')
+                    log("STREAM", "warning", "No hay SRT configurado")
+                    return
         
-        srt_url = self.last_srt_url
-        
-        if not srt_url:
+        # No intentar reproducir si no hay URL
+        if not self.last_srt_url:
             show_default_image()
             register_device('NO REPRODUCIENDO')
-            log("STREAM", "warning", "No hay URL configurada")
-            time.sleep(CONFIG_CHECK_INTERVAL)
             return
         
-        if self.ffmpeg_process and self.ffmpeg_process.poll() is None:
-            return
-            
-        log("STREAM", "info", f"Iniciando reproducción: {srt_url}")
-        
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-loglevel', 'info',
-            '-fflags', 'nobuffer',
-            '-flags', 'low_delay',
-            '-i', srt_url,
-            '-vf', 'scale=1920:1080',
-            '-pix_fmt', 'rgb565',
-            '-f', 'fbdev',
-            '-y', '/dev/fb0',
-            '-f', 'alsa',
-            '-ac', '2',
-            '-ar', '48000',
-            'default'
-        ]
-        
-        try:
-            self.ffmpeg_process = subprocess.Popen(
-                ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
-            
-            log("FFMPEG", "success", "Proceso iniciado")
-            register_device('REPRODUCIENDO')
-            
-        except Exception as e:
-            log("FFMPEG", "error", f"Error iniciando proceso: {e}")
-            show_default_image()
-            register_device('NO REPRODUCIENDO')
-            self.ffmpeg_process = None
+        # Solo iniciar FFmpeg si no está corriendo
+        if not self.ffmpeg_process or self.ffmpeg_process.poll() is not None:
+            self._start_ffmpeg(self.last_srt_url)
 
     def _start_output_monitor(self):
         """Monitorea la salida de FFmpeg en tiempo real"""

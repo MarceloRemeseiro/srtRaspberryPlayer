@@ -167,36 +167,62 @@ def register_with_streaming_server(server_url):
 
 def register_device(status='ONLINE'):
     """Registra el dispositivo en el servidor de streaming"""
-    global current_server_url
+    global current_server_url, device_status
     
     # Intentar registro en proxy primero
     log("REGISTRO", "info", "Intentando registro en proxy...")
-    register_with_proxy()
     
-    # Si tenemos URL de streaming, intentar registro
-    if current_server_url:
-        log("REGISTRO", "info", f"Intentando registro en servidor de streaming: {current_server_url}/api/devices/register")
-        return register_with_streaming_server(current_server_url)
-    else:
-        log("REGISTRO", "info", "Esperando asignación de servidor de streaming...")
-        return None
+    try:
+        response = requests.post(
+            f"{PROXY_URL}/api/devices/register",
+            json={'id': DEVICE_ID},
+            timeout=5
+        )
+        
+        if response.status_code != 200:
+            log("PROXY", "error", f"Error {response.status_code}: {response.text}")
+            device_status = 'OFFLINE'
+            current_server_url = None
+            return False
+            
+        result = response.json()
+        log("PROXY", "info", f"Respuesta del proxy: {result}")
+        
+        # Actualizar estado según el proxy
+        device_status = result.get('status', 'unassigned')
+        
+        # Solo si está asignado continuamos
+        if device_status == 'assigned':
+            current_server_url = result.get('streamingUrl')
+            if current_server_url:
+                log("PROXY", "success", f"URL streaming recibida: {current_server_url}")
+                # Solo ahora intentamos registro con streaming
+                return register_with_streaming_server(current_server_url)
+        else:
+            log("PROXY", "info", "Dispositivo no asignado, esperando asignación")
+            current_server_url = None
+            return False
+            
+    except Exception as e:
+        log("PROXY", "error", f"Error en registro: {e}")
+        device_status = 'OFFLINE'
+        current_server_url = None
+        return False
 
 def get_srt_url():
-    """Función principal para obtener la URL SRT y mantener el estado"""
-    global current_srt_url, current_server_url, device_status
+    """Función principal para obtener la URL SRT"""
+    global current_srt_url, device_status
     
-    if not current_server_url:
-        log("SRT", "error", "No hay servidor de streaming asignado")
+    # Solo intentamos obtener URL si estamos registrados en el proxy
+    if device_status != 'assigned':
+        log("SRT", "info", f"No consultando SRT - dispositivo no asignado (Estado: {device_status})")
         return None
-        
-    # Actualizamos el estado periódicamente
+    
+    # Actualizamos estado
     if should_check_proxy():
-        register_device()
-    
-    # Solo devolvemos la URL si estamos activos
-    if device_status not in ['ONLINE', 'ACTIVE']:
-        log("SRT", "info", f"Dispositivo no está activo (Estado: {device_status})")
-        return None
+        if not register_device():
+            current_srt_url = None
+            return None
     
     return current_srt_url
 
