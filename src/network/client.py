@@ -173,9 +173,14 @@ def register_device(status='ONLINE'):
     log("REGISTRO", "info", "Intentando registro en proxy...")
     
     try:
+        data = {
+            'id': DEVICE_ID,
+            'ipPublica': '0.0.0.0'  # Valor por defecto temporal
+        }
+        
         response = requests.post(
             f"{PROXY_URL}/api/devices/register",
-            json={'id': DEVICE_ID},
+            json=data,
             timeout=5
         )
         
