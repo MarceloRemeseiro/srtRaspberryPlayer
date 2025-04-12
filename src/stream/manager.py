@@ -192,49 +192,41 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando FFmpeg básico con configuración integrada de audio y video
+                # Base del comando FFmpeg con entrada
                 ffmpeg_cmd = [
                     'ffmpeg',
-                    '-loglevel', 'error',
-                    '-fflags', 'nobuffer',
-                    '-flags', 'low_delay',
-                    '-probesize', '32',
-                    '-analyzeduration', '0',
-                    '-i', srt_url,
+                    '-loglevel', 'warning',
+                    '-i', srt_url
                 ]
                 
-                # Parámetros de video
-                ffmpeg_cmd.extend([
-                    '-vf', 'scale=1920:1080',
+                # Mapeos y configuraciones específicas
+                video_output = [
+                    '-map', '0:v:0',          # Mapear primer stream de video
                     '-pix_fmt', 'rgb565',
-                    '-vsync', 'cfr'  # Sincronización de frames constante
-                ])
-                
-                # Parámetros de audio (si está disponible)
-                if self.has_audio:
-                    ffmpeg_cmd.extend([
-                        '-ac', '2',       # 2 canales (estéreo)
-                        '-async', '1'     # Sincronización de audio automática
-                    ])
-                    log("FFMPEG", "info", "Audio habilitado con sincronización")
-                else:
-                    ffmpeg_cmd.append('-an')
-                    log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
-                
-                # Dispositivos de salida
-                ffmpeg_cmd.extend([
                     '-f', 'fbdev',
                     '/dev/fb0'
-                ])
+                ]
                 
-                # Añadir salida de audio solo si está disponible
+                audio_output = []
                 if self.has_audio:
-                    ffmpeg_cmd.extend([
+                    audio_output = [
+                        '-map', '0:a:0',      # Mapear primer stream de audio
                         '-f', 'alsa',
-                        'sysdefault:CARD=vc4hdmi0'  # Dispositivo que funcionó en las pruebas
-                    ])
+                        '-ac', '2',
+                        'default'
+                    ]
+                    log("FFMPEG", "info", "Audio mapeado explícitamente")
                 
-                log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
+                # Construir comando completo
+                if self.has_audio:
+                    # Incluir ambas salidas en un solo comando para procesar simultáneamente
+                    ffmpeg_cmd.extend(video_output + audio_output)
+                else:
+                    # Sin audio, solo incluir salida de video
+                    ffmpeg_cmd.extend(['-an'] + video_output)
+                    log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
+                
+                log("FFMPEG", "debug", f"Comando con mapeo explícito: {' '.join(ffmpeg_cmd)}")
                 
                 self.ffmpeg_process = subprocess.Popen(
                     ffmpeg_cmd,
