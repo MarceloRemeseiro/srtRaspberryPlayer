@@ -209,26 +209,34 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando FFmpeg con ALSA directamente
+                # Comando FFmpeg con opciones mejoradas
                 ffmpeg_cmd = [
                     'ffmpeg',
+                    '-reconnect', '1',
+                    '-reconnect_at_eof', '1',
+                    '-reconnect_streamed', '1',
+                    '-reconnect_delay_max', '5',
                     '-i', fixed_srt_url,
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
-                    '/dev/fb0'
+                    '/dev/fb0',
+                    '-an'  # Deshabilitar audio temporalmente para pruebas
                 ]
                 
-                # Añadir audio usando ALSA directamente si está disponible
+                # Añadir audio usando ALSA directamente si está disponible (comentado temporalmente)
+                """
                 if self.has_audio:
                     ffmpeg_cmd.extend([
                         '-f', 'alsa',
                         '-ac', '2',      # 2 canales (estéreo)
-                        'hw:0,0'         # Usar directamente el hardware HDMI (card 0, device 0)
+                        'default'        # Usar el dispositivo default de ALSA
                     ])
-                    log("FFMPEG", "info", "Usando ALSA directo hw:0,0 para salida de audio HDMI")
+                    log("FFMPEG", "info", "Usando ALSA con dispositivo default para salida de audio")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
+                """
+                log("FFMPEG", "info", "Audio desactivado temporalmente para pruebas")
                 
                 log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
                 
@@ -254,6 +262,7 @@ class StreamManager:
             frame_count = 0
             start_time = time.time()
             last_status_time = 0
+            last_errors = []  # Almacenar los últimos errores
             
             while self.ffmpeg_process and self.ffmpeg_process.poll() is None:
                 # Leer stderr (donde FFmpeg escribe sus logs)
@@ -261,9 +270,15 @@ class StreamManager:
                 if err:
                     err = err.strip()
                     
-                    # Solo mostrar logs críticos para evitar saturación
-                    if 'error' in err.lower() and 'decode_slice_header' not in err:
-                        log("FFMPEG", "error", err)
+                    # Capturar todos los mensajes de error para diagnóstico
+                    if 'error' in err.lower():
+                        last_errors.append(err)
+                        if len(last_errors) > 10:  # Limitar a los 10 últimos errores
+                            last_errors.pop(0)
+                        
+                        # Solo mostrar logs críticos para evitar saturación
+                        if 'decode_slice_header' not in err:
+                            log("FFMPEG", "error", err)
                     
                     # Mostrar info de frames periódicamente
                     if 'frame=' in err:
@@ -276,11 +291,28 @@ class StreamManager:
                 # Dormir para reducir uso de CPU
                 time.sleep(0.1)
             
+            # Cuando termine, mostrar los errores más recientes
+            if last_errors:
+                log("FFMPEG", "error", f"Últimos errores antes de terminar:")
+                for error in last_errors[-5:]:  # Mostrar los 5 últimos errores
+                    log("FFMPEG", "error", f"  - {error}")
+            
+            # Verificar el código de salida
+            exit_code = self.ffmpeg_process.poll() if self.ffmpeg_process else None
+            log("FFMPEG", "info", f"Proceso terminado con código {exit_code} después de {int(time.time() - start_time)}s")
+            
+            # Intentar obtener la salida completa
+            try:
+                stdout, stderr = "", ""
+                if self.ffmpeg_process:
+                    stdout, stderr = self.ffmpeg_process.communicate(timeout=1)
+                    if stderr:
+                        log("FFMPEG", "error", f"Error final de FFmpeg: {stderr[-500:] if len(stderr) > 500 else stderr}")
+            except Exception as e:
+                log("FFMPEG", "warning", f"No se pudo obtener la salida final: {e}")
+            
             # Cuando termine, reiniciar con un retraso
             if self.ffmpeg_process:
-                running_time = time.time() - start_time
-                log("FFMPEG", "info", f"Proceso terminado después de {int(running_time)}s - Reiniciando...")
-                
                 # Limpiar el proceso terminado
                 self.ffmpeg_process = None
                 
