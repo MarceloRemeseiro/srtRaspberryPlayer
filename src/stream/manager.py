@@ -1,6 +1,7 @@
 import time
 import subprocess
 import threading
+import os
 from config.settings import CONFIG_CHECK_INTERVAL
 from display.screen import show_default_image
 from network.client import register_device, get_srt_url, log
@@ -11,6 +12,33 @@ class StreamManager:
         self.last_config_check = time.time()
         self.last_srt_url = None
         self.last_ffmpeg_start = 0  # Timestamp del último inicio de FFmpeg
+        self.has_audio = self._check_audio_device()
+
+    def _check_audio_device(self):
+        """Verifica si hay dispositivos de audio disponibles"""
+        try:
+            # Comprobar si existe /dev/snd
+            if not os.path.exists('/dev/snd'):
+                log("AUDIO", "warning", "No se encontró /dev/snd")
+                return False
+                
+            # Intentar obtener dispositivos de audio
+            result = subprocess.run(['aplay', '-l'], 
+                                    stdout=subprocess.PIPE, 
+                                    stderr=subprocess.PIPE, 
+                                    text=True)
+            
+            if "no soundcards found" in result.stderr:
+                log("AUDIO", "warning", "No se encontraron dispositivos de audio")
+                return False
+                
+            # Si llegamos aquí, hay dispositivos de audio
+            log("AUDIO", "info", "Dispositivos de audio encontrados")
+            return True
+            
+        except Exception as e:
+            log("AUDIO", "error", f"Error verificando dispositivos de audio: {e}")
+            return False
 
     def stop_ffmpeg(self):
         if self.ffmpeg_process:
@@ -62,26 +90,38 @@ class StreamManager:
             try:
                 # Actualizar timestamp antes de iniciar
                 self.last_ffmpeg_start = current_time
+                
+                # Configuración base de FFmpeg
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-loglevel', 'info',
-                    '-fflags', 'nobuffer+discardcorrupt',  # Ignorar datos corruptos
+                    '-fflags', 'nobuffer+discardcorrupt+genpts',  # Ignorar datos corruptos y generar timestamps
                     '-flags', 'low_delay',
-                    '-probesize', '32',                # Reducir tamaño de análisis
-                    '-analyzeduration', '0',           # No analizar duración
+                    '-probesize', '1M',                  # Aumentar tamaño de análisis
+                    '-analyzeduration', '2000000',       # Aumentar duración de análisis
                     '-protocol_whitelist', 'file,udp,rtp,srt', # Protocolos permitidos
-                    '-skip_frame', 'noref',            # Saltar frames no referenciales
-                    '-re',                             # Leer a velocidad nativa
+                    '-skip_frame', 'noref',              # Saltar frames no referenciales
+                    '-re',                               # Leer a velocidad nativa
+                    '-stimeout', '5000000',              # Timeout SRT (5 segundos)
                     '-i', self.last_srt_url,
                     '-vf', 'scale=1920:1080',
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
-                    '-y', '/dev/fb0',
-                    '-f', 'alsa',
-                    '-ac', '2',
-                    '-ar', '48000',
-                    'default'
+                    '-y', '/dev/fb0'
                 ]
+                
+                # Añadir audio solo si está disponible
+                if not self.has_audio:
+                    ffmpeg_cmd.append('-an')  # Desactivar audio
+                    log("FFMPEG", "warning", "Reproduciendo sin audio (no hay dispositivo disponible)")
+                else:
+                    ffmpeg_cmd.extend([
+                        '-f', 'alsa',
+                        '-ac', '2',
+                        '-ar', '48000',
+                        'default'
+                    ])
+                    log("FFMPEG", "info", "Reproduciendo con audio")
                 
                 self.ffmpeg_process = subprocess.Popen(
                     ffmpeg_cmd,
