@@ -14,20 +14,53 @@ if systemctl is-active --quiet srt-player; then
     systemctl stop srt-player
 fi
 
-# Instalar dependencias del sistema
-echo "📦 Instalando dependencias del sistema..."
-apt-get update
-apt-get install -y \
-    ffmpeg \
-    python3-requests \
-    python3-pip \
-    python3-full \
-    python3-opencv \
-    python3-numpy
+# Colores para mensajes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-# Verificar instalación
-echo "✅ Verificando instalación de Python y módulos..."
-python3 -c "import requests; import cv2; import numpy; print('Módulos instalados correctamente')"
+echo -e "${GREEN}=== Instalando dependencias mínimas para SRT Player ===${NC}"
+
+# Actualizar repositorios
+echo -e "${YELLOW}Actualizando repositorios...${NC}"
+apt-get update
+
+# Instalar solo dependencias esenciales
+echo -e "${YELLOW}Instalando dependencias esenciales...${NC}"
+apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-requests \
+    omxplayer \
+    alsa-utils
+
+# Configurar audio HDMI
+echo -e "${YELLOW}Configurando audio HDMI...${NC}"
+amixer cset numid=3 2
+
+# Verificar que audio esté habilitado en config.txt
+echo -e "${YELLOW}Verificando configuración de audio en /boot/config.txt...${NC}"
+if ! grep -q "^dtparam=audio=on" /boot/config.txt; then
+    echo "dtparam=audio=on" >> /boot/config.txt
+    echo -e "${GREEN}Audio habilitado en /boot/config.txt${NC}"
+fi
+
+# Cargar módulo de sonido
+echo -e "${YELLOW}Cargando módulo de sonido...${NC}"
+modprobe snd-bcm2835
+
+# Verificar si OMXPlayer está instalado correctamente
+if command -v omxplayer >/dev/null 2>&1; then
+    echo -e "${GREEN}OMXPlayer instalado correctamente${NC}"
+else
+    echo -e "${RED}Error: OMXPlayer no se pudo instalar${NC}"
+    exit 1
+fi
+
+# Instalar solo requests de Python
+echo -e "${YELLOW}Instalando requests para Python...${NC}"
+pip3 install requests
 
 # 1. Servicio del player
 echo "🔧 Configurando servicio del player..."
@@ -85,14 +118,6 @@ echo "▶️ Iniciando servicios..."
 systemctl start disable-cursor
 systemctl start srt-player
 
-# 7. Mostrar estado
-echo "📊 Estado del servicio:"
-systemctl status srt-player
-
-# Configurar audio HDMI
-echo "🔊 Configurando audio HDMI..."
-apt-get install -y alsa-utils
-
 # Configurar ALSA
 echo "🔊 Configurando ALSA..."
 cat > /etc/asound.conf << EOF
@@ -108,17 +133,6 @@ ctl.!default {
 }
 EOF
 
-# Habilitar módulos de sonido y cargarlos
-echo "🔊 Habilitando módulos de sonido..."
-modprobe snd-bcm2835
-amixer cset numid=3 2  # 2 = HDMI, 1 = Analógico, 0 = Auto
-
-# Verificar configuración de audio en config.txt
-echo "🔊 Verificando configuración de audio..."
-if ! grep -q "dtparam=audio=on" /boot/config.txt; then
-    echo "dtparam=audio=on" >> /boot/config.txt
-fi
-
 # Añadir soporte gráfico y audio
 if ! grep -q "vc4-kms-v3d" /boot/config.txt; then
     echo "dtoverlay=vc4-kms-v3d" >> /boot/config.txt
@@ -130,5 +144,6 @@ cat > /etc/modprobe.d/alsa-base.conf << EOF
 options snd-bcm2835 index=0
 EOF
 
-echo "✨ Instalación completada!"
-echo "Para ver los logs en tiempo real: journalctl -u srt-player -f"
+echo -e "${GREEN}=== Instalación completada ===${NC}"
+echo -e "${GREEN}Reinicia el sistema para aplicar todos los cambios${NC}"
+echo -e "${YELLOW}Comando para ver logs: journalctl -u srt-player -f${NC}"
