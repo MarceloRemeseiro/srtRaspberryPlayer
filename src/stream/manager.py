@@ -67,16 +67,31 @@ class StreamManager:
                 # Reconfigurar HDMI como salida 
                 self._setup_audio()
                 
-                # Opciones para VLC según documentación
+                # Opciones para VLC con decodificación hardware y sincronización
                 vlc_cmd = [
                     'cvlc',  # VLC sin interfaz
                     '-vvv',  # Modo verboso para mejor diagnóstico
                     srt_url,
-                    '--sout', '#std',  # Salida estándar
-                    '--fullscreen'
+                    # Habilitar decodificación por hardware
+                    '--avcodec-hw=any',  # Usar cualquier aceleración hardware disponible
+                    '--codec=h264',      # Forzar codec h264
+                    # Ajustes para sincronización audio/video
+                    '--audio-desync=500',   # Ajuste fino de sincronización (500ms adelanto en audio)
+                    '--no-audio-time-stretch', # Desactivar estiramiento de tiempo en audio
+                    # Configuración de caché para streaming
+                    '--network-caching=500',  # Menos caché para reducir latencia
+                    '--live-caching=300',     # Caché para contenido en vivo
+                    # Salida de video y audio
+                    '--mmal-display-x=0',    # Parámetros de posición en pantalla
+                    '--mmal-display-y=0',
+                    '--mmal-display-width=0',
+                    '--mmal-display-height=0',
+                    '--fullscreen',
+                    '--aout=alsa',           # Salida de audio ALSA
+                    '--gain=1.0'             # Ganancia normal
                 ]
                 
-                log("STREAM", "info", f"Iniciando cvlc según documentación")
+                log("STREAM", "info", f"Iniciando VLC con aceleración hardware y sincronización mejorada")
                 
                 # Iniciar VLC
                 self.player_process = subprocess.Popen(
