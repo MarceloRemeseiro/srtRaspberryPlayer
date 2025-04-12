@@ -15,7 +15,7 @@ class StreamManager:
         self.failed_attempts = 0    # Contador de intentos fallidos consecutivos
         self.has_audio = self._check_audio_device()
         self.has_framebuffer = self._check_framebuffer()
-        self.use_hw_decoder = False  # Inicialmente usar decodificador por software
+        self.use_hw_decoder = self._check_hw_decoder()  # Verificar disponibilidad de decodificación HW
         
         # Probar la capacidad de video al inicio
         if self.has_framebuffer:
@@ -151,6 +151,39 @@ class StreamManager:
                     pass
             self.ffmpeg_process = None
 
+    def _check_hw_decoder(self):
+        """Verificar si hay decodificadores de hardware disponibles"""
+        try:
+            # Verificar si V4L2 está disponible (para Raspberry Pi 5)
+            v4l2_check = subprocess.run(
+                ['ls', '/dev/video*'], 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            if v4l2_check.returncode == 0 and v4l2_check.stdout:
+                log("VIDEO", "success", "Dispositivos V4L2 detectados para decodificación HW")
+                return True
+                
+            # Verificar si el codec MMAL está disponible (para Raspberry Pi 4 y anteriores)
+            ffmpeg_check = subprocess.run(
+                ['ffmpeg', '-encoders'], 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            if 'h264_omx' in ffmpeg_check.stdout or 'h264_mmal' in ffmpeg_check.stdout:
+                log("VIDEO", "success", "Codec MMAL/OMX detectado para decodificación HW")
+                return True
+                
+            log("VIDEO", "warning", "No se detectó hardware de decodificación, usando decodificación por software")
+            return False
+        except Exception as e:
+            log("VIDEO", "warning", f"Error verificando decodificadores HW: {e}")
+            return False
+
     def stream_video(self):
         current_time = time.time()
         
@@ -192,23 +225,44 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando FFmpeg optimizado para baja latencia y estabilidad de frames
+                # Base del comando FFmpeg con configuración de red optimizada
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-loglevel', 'warning',
-                    '-fflags', 'nobuffer+discardcorrupt',  # No buffering y descartar frames corruptos
-                    '-flags', 'low_delay',                # Priorizar baja latencia
-                    '-probesize', '32',                   # Reducir tamaño de sondeo
-                    '-analyzeduration', '0',              # No analizar duración
-                    '-re',                                # Leer a velocidad nativa
-                    '-i', srt_url,
-                    '-threads', '2',                      # Limitar threads para evitar sobrecarga
-                    '-preset', 'ultrafast',               # Codificación más rápida
-                    '-tune', 'zerolatency',               # Optimizar para latencia cero
+                    # Configuración de red y buffer
+                    '-fflags', 'nobuffer+discardcorrupt',
+                    '-flags', 'low_delay',
+                    '-probesize', '32',
+                    '-analyzeduration', '0',
+                    # Configuración de SRT avanzada para reducir latencia
+                    '-protocol_whitelist', 'file,udp,rtp,srt',
+                    '-strict', 'experimental',
+                ]
+                
+                # Añadir opciones de entrada
+                ffmpeg_cmd.extend(['-i', srt_url])
+                
+                # Configuración de decodificación según disponibilidad de hardware
+                if self.use_hw_decoder:
+                    # Intentar usar decodificador de hardware V4L2 (Pi 5)
+                    ffmpeg_cmd.extend([
+                        '-c:v', 'h264_v4l2m2m',
+                        '-threads', '4',          # Más threads para Pi 5
+                    ])
+                    log("FFMPEG", "info", "Usando decodificador de hardware V4L2")
+                else:
+                    # Configuración para decodificación por software
+                    ffmpeg_cmd.extend([
+                        '-threads', '2',
+                    ])
+                    log("FFMPEG", "info", "Usando decodificación por software")
+                
+                # Configuración de salida común
+                ffmpeg_cmd.extend([
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '/dev/fb0'
-                ]
+                ])
                 
                 # Añadir audio usando ALSA si está disponible
                 if self.has_audio:
@@ -217,18 +271,20 @@ class StreamManager:
                         '-ac', '2',
                         'sysdefault:CARD=vc4hdmi0'
                     ])
-                    log("FFMPEG", "info", "Audio habilitado con latencia reducida")
+                    log("FFMPEG", "info", "Audio habilitado")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
                 
                 log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
                 
+                # Configurar buffer de lectura más grande para el proceso
                 self.ffmpeg_process = subprocess.Popen(
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    universal_newlines=True
+                    universal_newlines=True,
+                    bufsize=10240  # Buffer más grande para mejor rendimiento
                 )
                 
                 log("FFMPEG", "success", "Proceso iniciado")
