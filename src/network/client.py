@@ -275,8 +275,8 @@ def should_check_proxy():
     global last_proxy_check
     current_time = time.time()
     
-    # Actualizamos el estado cada 5 segundos
-    if last_proxy_check == 0 or (current_time - last_proxy_check) > 5:
+    # Actualizamos el estado cada 3 segundos para asegurar que nunca pasamos el umbral de 10 segundos del servidor
+    if last_proxy_check == 0 or (current_time - last_proxy_check) > 3:
         last_proxy_check = current_time
         return True
     return False
