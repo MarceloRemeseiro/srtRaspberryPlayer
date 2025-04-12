@@ -67,31 +67,14 @@ class StreamManager:
                 # Reconfigurar HDMI como salida 
                 self._setup_audio()
                 
-                # Opciones para VLC con decodificación hardware y sincronización
+                # Opciones mínimas para VLC 
                 vlc_cmd = [
-                    'cvlc',  # VLC sin interfaz
-                    '-vvv',  # Modo verboso para mejor diagnóstico
-                    srt_url,
-                    # Habilitar decodificación por hardware
-                    '--avcodec-hw=any',  # Usar cualquier aceleración hardware disponible
-                    '--codec=h264',      # Forzar codec h264
-                    # Ajustes para sincronización audio/video
-                    '--audio-desync=500',   # Ajuste fino de sincronización (500ms adelanto en audio)
-                    '--no-audio-time-stretch', # Desactivar estiramiento de tiempo en audio
-                    # Configuración de caché para streaming
-                    '--network-caching=500',  # Menos caché para reducir latencia
-                    '--live-caching=300',     # Caché para contenido en vivo
-                    # Salida de video y audio
-                    '--mmal-display-x=0',    # Parámetros de posición en pantalla
-                    '--mmal-display-y=0',
-                    '--mmal-display-width=0',
-                    '--mmal-display-height=0',
-                    '--fullscreen',
-                    '--aout=alsa',           # Salida de audio ALSA
-                    '--gain=1.0'             # Ganancia normal
+                    'cvlc',           # VLC sin interfaz
+                    srt_url,          # URL SRT directa
+                    '--fullscreen'     # Pantalla completa
                 ]
                 
-                log("STREAM", "info", f"Iniciando VLC con aceleración hardware y sincronización mejorada")
+                log("STREAM", "info", f"Iniciando VLC con configuración mínima: {' '.join(vlc_cmd)}")
                 
                 # Iniciar VLC
                 self.player_process = subprocess.Popen(
