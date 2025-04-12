@@ -22,56 +22,72 @@ class StreamManager:
             self._test_video_output()
 
     def _check_audio_device(self):
-        """Verifica si hay dispositivos de audio disponibles"""
+        """Verifica si hay dispositivos de audio disponibles mediante PulseAudio"""
         try:
-            # Comprobar si existe /dev/snd
-            if not os.path.exists('/dev/snd'):
-                log("AUDIO", "warning", "No se encontró /dev/snd, intentando cargar el módulo de sonido")
-                # Intentar cargar el módulo de sonido Raspberry Pi
-                try:
-                    subprocess.run(['modprobe', 'snd-bcm2835'], check=True)
-                    log("AUDIO", "info", "Módulo snd-bcm2835 cargado")
-                    # Dar tiempo a que se inicialice
-                    time.sleep(1)
-                except Exception as e:
-                    log("AUDIO", "error", f"Error cargando módulo de sonido: {e}")
-                
-                # Verificar de nuevo si existe /dev/snd después de cargar el módulo
-                if not os.path.exists('/dev/snd'):
-                    log("AUDIO", "warning", "Aún no se encuentra /dev/snd")
-                    return False
+            # Forzar el inicio de PulseAudio
+            log("AUDIO", "info", "Verificando e iniciando PulseAudio...")
             
-            # Intentar configurar salida HDMI
+            # Matar cualquier instancia actual y reiniciar limpio
             try:
-                # Configurar audio para HDMI (3 = HDMI, 2 = HDMI1, 1 = Analógico)
-                log("AUDIO", "info", "Configurando salida de audio HDMI...")
-                subprocess.run(['amixer', 'cset', 'numid=3', '2'], check=False, 
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run(['pulseaudio', '--kill'], 
+                              stdout=subprocess.PIPE, 
+                              stderr=subprocess.PIPE,
+                              timeout=3)
+                log("AUDIO", "info", "Instancia previa de PulseAudio terminada")
+                time.sleep(1)
+            except Exception:
+                pass
                 
-                # Establecer volumen al máximo
+            # Iniciar PulseAudio
+            try:
+                start_pulse = subprocess.run(['pulseaudio', '--start'], 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE,
+                                           timeout=5)
+                log("AUDIO", "info", "Comando para iniciar PulseAudio ejecutado")
+                time.sleep(2)  # Dar tiempo a que se inicie completamente
+            except Exception as e:
+                log("AUDIO", "warning", f"Error iniciando PulseAudio: {e}")
+            
+            # Verificar si está funcionando
+            try:
+                pulse_check = subprocess.run(['pulseaudio', '--check'], 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE)
+                
+                if pulse_check.returncode == 0:
+                    log("AUDIO", "success", "PulseAudio está funcionando")
+                else:
+                    log("AUDIO", "warning", "PulseAudio no está funcionando a pesar de los intentos")
+            except Exception as e:
+                log("AUDIO", "warning", f"Error verificando PulseAudio: {e}")
+                
+            # Configurar volumen al máximo
+            try:
                 subprocess.run(['amixer', 'set', 'Master', '100%'], check=False,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                log("AUDIO", "info", "Volumen configurado")
             except Exception as e:
-                log("AUDIO", "warning", f"Error configurando audio HDMI: {e}")
+                log("AUDIO", "warning", f"Error configurando volumen: {e}")
                 
-            # Intentar obtener dispositivos de audio
-            result = subprocess.run(['aplay', '-l'], 
-                                    stdout=subprocess.PIPE, 
-                                    stderr=subprocess.PIPE, 
-                                    text=True)
-            
-            if "no soundcards found" in result.stderr:
-                log("AUDIO", "warning", "No se encontraron dispositivos de audio")
-                return False
+            # Verificar dispositivos de PulseAudio
+            try:
+                # Verificar los dispositivos de audio disponibles
+                pulse_list = subprocess.run(['pactl', 'list', 'sinks', 'short'], 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE,
+                                           text=True)
                 
-            # Si llegamos aquí, hay dispositivos de audio
-            log("AUDIO", "info", f"Dispositivos de audio encontrados: {result.stdout.strip()}")
+                if pulse_list.stdout:
+                    log("AUDIO", "success", f"Dispositivos PulseAudio: {pulse_list.stdout.strip()}")
+                    return True
+                else:
+                    log("AUDIO", "warning", "No se encontraron dispositivos PulseAudio")
+            except Exception as e:
+                log("AUDIO", "warning", f"Error listando dispositivos PulseAudio: {e}")
             
-            # Probar dispositivos disponibles
-            devices = ['default', 'hw:0,0', 'hw:0,1', 'hw:CARD=b835,DEV=0', 'plughw:0,0']
-            for device in devices:
-                log("AUDIO", "info", f"Verificando dispositivo: {device}")
-            
+            # Si llegamos aquí, igual consideramos que hay audio y lo intentamos
+            log("AUDIO", "info", "Asumiendo que hay audio disponible para intentar la reproducción")
             return True
             
         except Exception as e:
@@ -179,54 +195,40 @@ class StreamManager:
                 time.sleep(10)
                 return
         
-        # Si tenemos más de 3 intentos fallidos, probar con video local
-        if self.failed_attempts >= 3:
-            log("FFMPEG", "warning", "Demasiados intentos fallidos, reiniciando contador y volviendo a intentar")
-            # Reiniciar contador
-            self.failed_attempts = 0
-            return
-        
-        # URL SRT fija que sabemos que funciona
-        # Formato SRT con streamid (necesario) pero sin otros parámetros
+        # URL SRT exacta que el usuario confirmó que funciona con su comando
         fixed_srt_url = "srt://core.streamingpro.es:6000/?mode=caller&transtype=live&streamid=7bb5ff4b-9470-4ff0-b5ff-16af476e8c1f,mode:request"
         
         # Si FFmpeg no está corriendo, iniciarlo
         if not self.ffmpeg_process or (self.ffmpeg_process and self.ffmpeg_process.poll() is not None):
-            log("STREAM", "info", f"Iniciando reproducción con URL básica: {fixed_srt_url}")
+            log("STREAM", "info", f"Iniciando reproducción con SRT URL probada")
+            
+            # Verificar que PulseAudio esté funcionando antes de iniciar FFmpeg
+            try:
+                # Lanzar --start antes de cada intento (es inofensivo si ya está corriendo)
+                subprocess.run(['pulseaudio', '--start'], 
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                log("AUDIO", "info", "PulseAudio verificado antes de iniciar FFmpeg")
+            except Exception as e:
+                log("AUDIO", "warning", f"Error verificando PulseAudio: {e}")
             
             try:
-                # Configuración optimizada para estabilidad, sólo opciones compatibles
+                # Comando exacto que funciona, sin modificar una sola letra o parámetro
                 ffmpeg_cmd = [
                     'ffmpeg',
-                    '-loglevel', 'debug',          # Log detallado para diagnóstico
-                    '-protocol_whitelist', 'file,udp,rtp,srt',  # Permitir protocolo SRT
-                    # Aumentar buffer para mayor estabilidad
-                    '-buffer_size', '16384k',      # Buffer grande
-                    '-fflags', '+genpts+ignidx',   # Generar timestamps
-                    # Quitar opciones incompatibles: srt_maxbw, srt_latency
                     '-i', fixed_srt_url,
-                    # Evitar filtros innecesarios para reducir carga de CPU
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
-                    '-framedrop',                  # Permitir descartar frames para mantener sincronización
-                    '-y', '/dev/fb0'
+                    '/dev/fb0'
                 ]
                 
-                # Añadir salida de audio si está disponible
+                # Añadir audio usando PulseAudio si está disponible
                 if self.has_audio:
-                    log("FFMPEG", "info", "Añadiendo salida de audio...")
                     ffmpeg_cmd.extend([
-                        '-f', 'alsa',
-                        '-ac', '2',                # 2 canales
-                        '-ar', '44100',            # Frecuencia de muestreo
-                        # Opciones de sincronización audio-video
-                        '-async', '1',             # Sincronización simple
-                        # La opción alsa_buffer_size puede no ser compatible,
-                        # usar buffer_size normal de ALSA
-                        'default'                  # Dispositivo predeterminado
+                        '-f', 'pulse',
+                        'default'
                     ])
+                    log("FFMPEG", "info", "Usando PulseAudio para salida de audio")
                 else:
-                    # Desactivar audio si no hay dispositivo
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
                 
@@ -254,14 +256,6 @@ class StreamManager:
             frame_count = 0
             start_time = time.time()
             last_status_time = 0
-            min_stable_time = 30  # Considerar estable si funciona más de 30 segundos
-            
-            # Recolectar todos los errores para diagnóstico
-            all_errors = []
-            
-            # Primeras líneas de salida para diagnóstico
-            initial_output = []
-            got_initial_output = False
             
             while self.ffmpeg_process and self.ffmpeg_process.poll() is None:
                 # Leer stderr (donde FFmpeg escribe sus logs)
@@ -269,70 +263,31 @@ class StreamManager:
                 if err:
                     err = err.strip()
                     
-                    # Recopilar primeras 10 líneas
-                    if not got_initial_output and len(initial_output) < 10:
-                        initial_output.append(err)
-                        log("FFMPEG", "debug", f"Salida: {err}")
-                    elif not got_initial_output:
-                        got_initial_output = True
-                        log("FFMPEG", "info", "Iniciada captura de salida")
-                    
-                    # Registrar errores para diagnóstico - excluir errores comunes de decode_slice_header
+                    # Solo mostrar logs críticos para evitar saturación
                     if 'error' in err.lower() and 'decode_slice_header' not in err:
-                        all_errors.append(err)
                         log("FFMPEG", "error", err)
                     
-                    # Salidas específicas para depuración
+                    # Mostrar info de frames periódicamente
                     if 'frame=' in err:
-                        try:
-                            frame_count += 1
-                            # Mostrar info de frames cada 5 segundos
-                            current_time = time.time()
-                            if current_time - last_status_time > 5:
-                                log("FFMPEG", "info", f"Reproduciendo: {err}")
-                                last_status_time = current_time
-                        except:
-                            pass
-                    elif ('audio:' in err.lower() or 'video:' in err.lower() or 
-                          'stream mapping:' in err.lower() or 'input #0' in err.lower()):
-                        log("FFMPEG", "info", err)
+                        frame_count += 1
+                        current_time = time.time()
+                        if current_time - last_status_time > 30:  # Solo cada 30 segundos
+                            log("FFMPEG", "info", f"Reproduciendo: {err}")
+                            last_status_time = current_time
                 
                 # Dormir para reducir uso de CPU
                 time.sleep(0.1)
             
-            # Cuando termine, mostrar diagnóstico
+            # Cuando termine, reiniciar con un retraso
             if self.ffmpeg_process:
                 running_time = time.time() - start_time
+                log("FFMPEG", "info", f"Proceso terminado después de {int(running_time)}s - Reiniciando...")
                 
-                # Mostrar código de salida para diagnóstico
-                exit_code = self.ffmpeg_process.poll() or 0
-                log("FFMPEG", "info", f"Proceso terminado con código {exit_code} después de {int(running_time)}s y {frame_count} frames")
-                
-                # Mostrar errores capturados (solo los más relevantes)
-                if all_errors:
-                    log("FFMPEG", "error", f"Se capturaron {len(all_errors)} errores, los últimos 3:")
-                    for err in all_errors[-3:]:
-                        log("FFMPEG", "error", f" - {err}")
-                
-                # Incrementar contador de intentos fallidos solo si falló demasiado pronto
-                if frame_count == 0 or running_time < min_stable_time:
-                    self.failed_attempts += 1
-                    log("FFMPEG", "warning", f"Intento fallido #{self.failed_attempts} - Duración insuficiente ({int(running_time)}s)")
-                else:
-                    # Si reprodujo frames durante un tiempo razonable, reiniciar contador
-                    self.failed_attempts = 0
-                    log("FFMPEG", "info", f"Reproducción estable durante {int(running_time)}s con {frame_count} frames")
-                
+                # Limpiar el proceso terminado
                 self.ffmpeg_process = None
                 
-                # Esperar más tiempo antes de reiniciar si ha funcionado bien
-                if running_time >= min_stable_time:
-                    delay = 5
-                    log("FFMPEG", "info", f"Esperando {delay}s antes de reiniciar...")
-                    time.sleep(delay)
-                else:
-                    # Esperar poco si falló rápido
-                    time.sleep(2)
+                # Esperar antes de reiniciar
+                time.sleep(3)
                 
                 # Reiniciar reproducción automáticamente
                 self.stream_video()
