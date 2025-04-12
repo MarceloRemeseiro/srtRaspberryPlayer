@@ -224,11 +224,10 @@ class StreamManager:
                 # Añadir audio usando PulseAudio si está disponible
                 if self.has_audio:
                     ffmpeg_cmd.extend([
-                        '-af', 'adelay=2500|all=1',  # Retraso de 2.5 segundos (2500ms)
                         '-f', 'pulse',
                         'default'
                     ])
-                    log("FFMPEG", "info", "Usando PulseAudio para salida de audio (con delay de 2.5s)")
+                    log("FFMPEG", "info", "Usando PulseAudio para salida de audio")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
