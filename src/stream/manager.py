@@ -8,22 +8,17 @@ from network.client import register_device, get_srt_url, log
 
 class StreamManager:
     def __init__(self):
-        self.ffmpeg_process = None
+        self.player_process = None
         self.last_config_check = time.time()
         self.last_srt_url = None
         self.failed_attempts = 0
-        self.has_audio = self._check_audio_device()
-        self.has_framebuffer = os.path.exists('/dev/fb0')
-        
-        if self.has_framebuffer:
-            log("VIDEO", "info", "Framebuffer detectado: /dev/fb0")
-        else:
-            log("VIDEO", "error", "Framebuffer no encontrado")
+        self._setup_audio()
+        log("SISTEMA", "info", "StreamManager inicializado - Usando OMXPlayer")
 
-    def _check_audio_device(self):
-        """Verifica si hay dispositivos de audio disponibles mediante ALSA"""
+    def _setup_audio(self):
+        """Configura el audio HDMI"""
         try:
-            log("AUDIO", "info", "Verificando ALSA para audio HDMI...")
+            log("AUDIO", "info", "Configurando audio HDMI...")
             
             # Configurar HDMI como salida principal
             subprocess.run(['amixer', 'cset', 'numid=3', '2'], 
@@ -35,25 +30,22 @@ class StreamManager:
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             log("AUDIO", "info", "Volumen configurado al máximo")
             
-            return True
-            
         except Exception as e:
-            log("AUDIO", "error", f"Error verificando dispositivos de audio: {e}")
-            return False
+            log("AUDIO", "error", f"Error configurando audio: {e}")
 
-    def stop_ffmpeg(self):
-        if self.ffmpeg_process:
-            log("FFMPEG", "info", "Deteniendo FFmpeg")
+    def stop_player(self):
+        if self.player_process:
+            log("PLAYER", "info", "Deteniendo reproductor")
             try:
-                self.ffmpeg_process.terminate()
-                self.ffmpeg_process.wait(timeout=3)
+                self.player_process.terminate()
+                self.player_process.wait(timeout=3)
             except Exception as e:
-                log("FFMPEG", "error", f"Error deteniendo FFmpeg: {e}")
+                log("PLAYER", "error", f"Error deteniendo reproductor: {e}")
                 try:
-                    self.ffmpeg_process.kill()
+                    self.player_process.kill()
                 except:
                     pass
-            self.ffmpeg_process = None
+            self.player_process = None
 
     def stream_video(self):
         # Obtener la URL SRT del servidor
@@ -67,88 +59,73 @@ class StreamManager:
         # Guardar la última URL SRT para reutilizarla en caso de reconexión
         self.last_srt_url = srt_url
         
-        # Si FFmpeg no está corriendo, iniciarlo
-        if not self.ffmpeg_process or (self.ffmpeg_process and self.ffmpeg_process.poll() is not None):
+        # Si el reproductor no está corriendo, iniciarlo
+        if not self.player_process or (self.player_process and self.player_process.poll() is not None):
             log("STREAM", "info", f"Iniciando reproducción con SRT URL: {srt_url}")
             
             try:
-                # Configurar HDMI como salida antes de iniciar FFmpeg
-                subprocess.run(['amixer', 'cset', 'numid=3', '2'], 
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                log("AUDIO", "info", "HDMI configurado como salida de audio")
+                # Reconfigurar HDMI como salida 
+                self._setup_audio()
                 
-                # Asegurar que el volumen está al máximo
-                subprocess.run(['amixer', 'set', 'Master', '100%'],
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                log("AUDIO", "info", "Volumen configurado al 100%")
-                
-                # Comando FFmpeg optimizado con sincronización de audio/video
-                ffmpeg_cmd = [
-                    'ffmpeg',
-                    '-loglevel', 'warning',
-                    '-stats',
-                    '-i', srt_url,
-                    # Parámetros de sincronización mejorados
-                    '-vsync', '1',
-                    '-async', '1',
-                    # Mapeo explícito de streams
-                    '-map', '0:v:0',
-                    '-map', '0:a:0',
-                    # Video con resolución 1080p
-                    '-s', '1920x1080',
-                    '-pix_fmt', 'rgb24',  # Mejor calidad de color que rgb565
-                    '-f', 'fbdev',
-                    '/dev/fb0',
-                    # Audio siempre habilitado
-                    '-af', 'aresample=async=1000',
-                    '-f', 'alsa',
-                    '-ac', '2',
-                    'sysdefault:CARD=vc4hdmi0'
+                # Opciones para OMXPlayer
+                omx_cmd = [
+                    'omxplayer',
+                    '--live',         # Modo live streaming
+                    '-o', 'hdmi',      # Salida por HDMI
+                    '--no-osd',        # Sin OSD
+                    '--no-keys',       # Sin controles de teclado
+                    '--refresh',       # Actualizar pantalla
+                    '--audio_fifo', '0.3', # Buffer de audio para sincronización
+                    '--video_fifo', '0.3', # Buffer de video para sincronización
+                    '--audio_queue', '1',  # Cola de audio
+                    '--video_queue', '1',  # Cola de video
+                    '--threshold', '0.2',  # Umbral para sincronización
+                    '--vol', '0',          # Volumen normal (en dB, 0 es sin cambios)
+                    '--timeout', '60',     # Timeout para conexión
+                    srt_url              # URL directa del stream SRT
                 ]
                 
-                log("FFMPEG", "info", f"Comando: {' '.join(ffmpeg_cmd)}")
+                log("STREAM", "info", f"Iniciando OMXPlayer: {' '.join(omx_cmd)}")
                 
-                # Iniciar proceso de FFmpeg
-                self.ffmpeg_process = subprocess.Popen(
-                    ffmpeg_cmd,
+                # Iniciar OMXPlayer directamente con la URL SRT
+                self.player_process = subprocess.Popen(
+                    omx_cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True
+                    stderr=subprocess.PIPE
                 )
                 
-                # Monitoreo simple en un hilo separado
+                # Monitoreo en hilo separado
                 threading.Thread(
-                    target=self._monitor_ffmpeg,
+                    target=self._monitor_player,
                     daemon=True
                 ).start()
                 
             except Exception as e:
-                log("FFMPEG", "error", f"Error iniciando FFmpeg: {e}")
-                self.ffmpeg_process = None
+                log("STREAM", "error", f"Error iniciando reproducción: {e}")
+                self.player_process = None
     
-    def _monitor_ffmpeg(self):
-        """Monitoreo simplificado para el proceso FFmpeg"""
+    def _monitor_player(self, ffmpeg_process=None):
+        """Monitoreo simplificado para el proceso de reproducción"""
         start_time = time.time()
         
         # Esperar a que el proceso termine
-        self.ffmpeg_process.wait()
+        exit_code = self.player_process.wait()
         
         # Procesar resultado
         running_time = int(time.time() - start_time)
-        exit_code = self.ffmpeg_process.returncode
-        log("FFMPEG", "info", f"FFmpeg terminado con código {exit_code} después de {running_time}s")
+        log("PLAYER", "info", f"Reproductor terminado con código {exit_code} después de {running_time}s")
         
         # Reintentar con espera progresiva si falló rápidamente
         if running_time < 5:
             self.failed_attempts += 1
             wait_time = min(30, 5 * self.failed_attempts)
-            log("FFMPEG", "info", f"Intento fallido #{self.failed_attempts}, esperando {wait_time}s antes de reintentar")
+            log("PLAYER", "info", f"Intento fallido #{self.failed_attempts}, esperando {wait_time}s antes de reintentar")
             time.sleep(wait_time)
         else:
             self.failed_attempts = 0
         
         # Limpiar y reiniciar
-        self.ffmpeg_process = None
+        self.player_process = None
         self.stream_video()
 
     def run(self):
@@ -156,7 +133,7 @@ class StreamManager:
         while True:
             try:
                 # Iniciar la reproducción si no está en curso
-                if not self.ffmpeg_process or (self.ffmpeg_process and self.ffmpeg_process.poll() is not None):
+                if not self.player_process or (self.player_process and self.player_process.poll() is not None):
                     self.stream_video()
                 
                 # Verificar periódicamente cambios en la URL
@@ -167,7 +144,7 @@ class StreamManager:
                     new_srt_url = get_srt_url()
                     if new_srt_url != self.last_srt_url:
                         log("SISTEMA", "info", "La URL SRT ha cambiado, reiniciando reproducción...")
-                        self.stop_ffmpeg()
+                        self.stop_player()
                         time.sleep(1)
                         self.stream_video()
                 
