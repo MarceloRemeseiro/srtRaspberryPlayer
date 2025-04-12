@@ -104,33 +104,28 @@ class StreamManager:
                 # Reconfigurar HDMI como salida 
                 self._setup_audio()
                 
-                # Opciones para MPV con parámetros avanzados anti-congelación
+                # Opciones para MPV con parámetros avanzados para estabilidad
                 mpv_cmd = [
                     'mpv',                                         # Reproductor MPV
                     srt_url,                                       # URL SRT directa
                     '--fullscreen',                                # Pantalla completa
                     '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',# Dispositivo de audio HDMI
                     '--volume=100',                                # Volumen al máximo
+                    '--untimed',                                   # Desactiva temporización interna para mejor streaming
                 ]
                 
-                log("STREAM", "info", f"Iniciando MPV con parámetros avanzados anti-congelación")
+                log("STREAM", "info", f"Iniciando MPV con parámetros optimizados para estabilidad")
                 
-                # Iniciar MPV
+                # Iniciar MPV con un simple proceso
                 self.player_process = subprocess.Popen(
                     mpv_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE
                 )
                 
-                # Monitoreo en hilo separado
+                # Simple thread para esperar que el proceso termine
                 threading.Thread(
-                    target=self._monitor_player,
-                    daemon=True
-                ).start()
-                
-                # Iniciar monitor de actividad para detectar congelación
-                threading.Thread(
-                    target=self._monitor_activity,
+                    target=self._simple_monitor,
                     daemon=True
                 ).start()
                 
@@ -138,41 +133,20 @@ class StreamManager:
                 log("STREAM", "error", f"Error iniciando reproducción: {e}")
                 self.player_process = None
     
-    def _monitor_player(self):
-        """Monitoreo simplificado para el proceso de reproducción"""
-        start_time = time.time()
-        
+    def _simple_monitor(self):
+        """Monitoreo básico para el proceso de reproducción"""
         try:
             # Esperar a que el proceso termine
             exit_code = self.player_process.wait()
-            
-            # Procesar resultado
-            running_time = int(time.time() - start_time)
-            log("PLAYER", "info", f"Reproductor terminado con código {exit_code} después de {running_time}s")
-            
-            # Reintentar con espera progresiva si falló rápidamente
-            if running_time < 5:
-                self.failed_attempts += 1
-                wait_time = min(30, 5 * self.failed_attempts)
-                log("PLAYER", "info", f"Intento fallido #{self.failed_attempts}, esperando {wait_time}s antes de reintentar")
-                time.sleep(wait_time)
-            else:
-                self.failed_attempts = 0
-        except Exception as e:
-            log("PLAYER", "error", f"Error en monitoreo: {e}")
-        finally:
-            # Asegurar que el proceso esté completamente terminado
-            if self.player_process and self.player_process.poll() is None:
-                try:
-                    self.player_process.kill()
-                except:
-                    pass
-            
+            log("PLAYER", "info", f"Reproductor terminado con código {exit_code}")
             self.player_process = None
-            # Limpiar procesos residuales
-            self._kill_existing_players()
-            # Continuar con reproducción
+            
+            # Simplemente intentar reiniciar después de un breve retraso
+            time.sleep(2)
             self.stream_video()
+        except Exception as e:
+            log("PLAYER", "error", f"Error en monitoreo simple: {e}")
+            self.player_process = None
 
     def _monitor_activity(self):
         """Monitor de actividad para detectar congelaciones graves y persistentes"""
@@ -231,17 +205,17 @@ class StreamManager:
                     self.last_config_check = current_time
                     
                     new_srt_url = get_srt_url()
-                    if new_srt_url != self.last_srt_url:
+                    if new_srt_url and new_srt_url != self.last_srt_url:
                         log("SISTEMA", "info", "La URL SRT ha cambiado, reiniciando reproducción...")
                         self.stop_player()
                         time.sleep(1)
                         self.stream_video()
                 
                 # Dormir para no consumir CPU
-                time.sleep(5)
+                time.sleep(3)
                 
             except Exception as e:
                 log("SISTEMA", "error", f"Error en bucle principal: {e}")
                 # Asegurar limpieza en caso de error
                 self._kill_existing_players()
-                time.sleep(10) 
+                time.sleep(5) 
