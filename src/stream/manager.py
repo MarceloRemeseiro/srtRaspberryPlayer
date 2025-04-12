@@ -52,6 +52,10 @@ class StreamManager:
                     '-loglevel', 'info',
                     '-fflags', 'nobuffer',
                     '-flags', 'low_delay',
+                    '-probesize', '32',                # Reducir tamaño de análisis
+                    '-analyzeduration', '0',           # No analizar duración
+                    '-reorder_queue_size', '0',        # Desactivar reordenamiento
+                    '-protocol_whitelist', 'file,udp,rtp,srt', # Protocolos permitidos
                     '-i', self.last_srt_url,
                     '-vf', 'scale=1920:1080',
                     '-pix_fmt', 'rgb565',
