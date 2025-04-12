@@ -52,10 +52,8 @@ else:
     PROXY_URL = 'http://192.168.1.51:3000'  # URL para producción
 
 # Intervalos de consulta (en segundos)
-PROXY_CHECK_INTERVAL = 60   # Consultar servidor proxy cada 60 segundos
+PROXY_CHECK_INTERVAL = 5   # Consultar servidor proxy cada 5 segundos
 CONFIG_CHECK_INTERVAL = 5   # Consultar configuración SRT cada 5 segundos
 
 # El SERVER_URL se establecerá dinámicamente
-SERVER_URL = None
-
-CONFIG_CHECK_INTERVAL = 5   # Segundos entre consultas al servidor 
+SERVER_URL = None 
