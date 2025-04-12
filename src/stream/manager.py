@@ -13,7 +13,7 @@ class StreamManager:
         self.last_srt_url = None
         self.failed_attempts = 0
         self._setup_audio()
-        log("SISTEMA", "info", "StreamManager inicializado - Usando OMXPlayer")
+        log("SISTEMA", "info", "StreamManager inicializado - Usando VLC")
 
     def _setup_audio(self):
         """Configura el audio HDMI"""
@@ -67,29 +67,29 @@ class StreamManager:
                 # Reconfigurar HDMI como salida 
                 self._setup_audio()
                 
-                # Opciones para OMXPlayer
-                omx_cmd = [
-                    'omxplayer',
-                    '--live',         # Modo live streaming
-                    '-o', 'hdmi',      # Salida por HDMI
-                    '--no-osd',        # Sin OSD
-                    '--no-keys',       # Sin controles de teclado
-                    '--refresh',       # Actualizar pantalla
-                    '--audio_fifo', '0.3', # Buffer de audio para sincronización
-                    '--video_fifo', '0.3', # Buffer de video para sincronización
-                    '--audio_queue', '1',  # Cola de audio
-                    '--video_queue', '1',  # Cola de video
-                    '--threshold', '0.2',  # Umbral para sincronización
-                    '--vol', '0',          # Volumen normal (en dB, 0 es sin cambios)
-                    '--timeout', '60',     # Timeout para conexión
-                    srt_url              # URL directa del stream SRT
+                # Opciones para VLC
+                vlc_cmd = [
+                    'cvlc',  # VLC sin interfaz
+                    '--no-video-title-show',
+                    '--fullscreen',
+                    '--no-loop',
+                    '--no-repeat',
+                    '--play-and-exit',
+                    '--aout=alsa',
+                    '--alsa-audio-device=hw:CARD=vc4hdmi0,DEV=0',
+                    '--video-on-top',
+                    '--audio-desync=0',  # Sincronización de audio
+                    '--network-caching=1000',  # Búfer de red (ms)
+                    '--file-caching=1000',
+                    '--sout-mux-caching=1000',
+                    srt_url
                 ]
                 
-                log("STREAM", "info", f"Iniciando OMXPlayer: {' '.join(omx_cmd)}")
+                log("STREAM", "info", f"Iniciando VLC: {' '.join(vlc_cmd)}")
                 
-                # Iniciar OMXPlayer directamente con la URL SRT
+                # Iniciar VLC
                 self.player_process = subprocess.Popen(
-                    omx_cmd,
+                    vlc_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE
                 )
@@ -101,10 +101,10 @@ class StreamManager:
                 ).start()
                 
             except Exception as e:
-                log("STREAM", "error", f"Error iniciando reproducción: {e}")
+                log("STREAM", "error", f"Error iniciando reproducción con VLC: {e}")
                 self.player_process = None
     
-    def _monitor_player(self, ffmpeg_process=None):
+    def _monitor_player(self):
         """Monitoreo simplificado para el proceso de reproducción"""
         start_time = time.time()
         
