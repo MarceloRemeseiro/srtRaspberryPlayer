@@ -67,41 +67,22 @@ class StreamManager:
                 # Reconfigurar HDMI como salida 
                 self._setup_audio()
                 
-                # Opciones para VLC
+                # Opciones para VLC según documentación
                 vlc_cmd = [
                     'cvlc',  # VLC sin interfaz
-                    '--no-video-title-show',
-                    '--fullscreen',
-                    '--quiet',
-                    '--no-loop',
-                    '--no-repeat',
-                    '--play-and-exit',
-                    # Configuración de audio mejorada
-                    '--aout=alsa',
-                    '--alsa-audio-device=sysdefault:CARD=vc4hdmi0',  # Usar el dispositivo de audio por defecto
-                    '--gain=1.0',  # Ganancia de audio normal
-                    '--audio-filter=compressor',  # Mejor procesamiento de audio
-                    # Configuración de video
-                    '--vout=mmal_vout',  # Salida de video optimizada para Raspberry Pi
-                    '--video-on-top',
-                    # Configuración de red y caché
-                    '--live-caching=300',  # Valor más bajo para streaming en vivo
-                    '--network-caching=1000',  # Búfer de red (ms)
-                    '--clock-jitter=0',  # Reduce jitter en la sincronización
-                    '--clock-synchro=0',  # Desactiva la sincronización de reloj para SRT
-                    '--sout-mux-caching=300',
-                    # Protocolo SRT con comillas para evitar problemas de shell
-                    f'"{srt_url}"'
+                    '-vvv',  # Modo verboso para mejor diagnóstico
+                    srt_url,
+                    '--sout', '#std',  # Salida estándar
+                    '--fullscreen'
                 ]
                 
-                log("STREAM", "info", f"Iniciando VLC con configuración mejorada")
+                log("STREAM", "info", f"Iniciando cvlc según documentación")
                 
-                # Iniciar VLC con shell=True para manejar la URL SRT correctamente
+                # Iniciar VLC
                 self.player_process = subprocess.Popen(
-                    ' '.join(vlc_cmd),
+                    vlc_cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    shell=True
+                    stderr=subprocess.PIPE
                 )
                 
                 # Monitoreo en hilo separado
