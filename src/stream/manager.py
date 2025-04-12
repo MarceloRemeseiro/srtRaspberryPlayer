@@ -192,26 +192,47 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando FFmpeg básico que ya está funcionando para video
+                # Comando FFmpeg básico con configuración integrada de audio y video
                 ffmpeg_cmd = [
                     'ffmpeg',
+                    '-loglevel', 'error',
+                    '-fflags', 'nobuffer',
+                    '-flags', 'low_delay',
+                    '-probesize', '32',
+                    '-analyzeduration', '0',
                     '-i', srt_url,
-                    '-pix_fmt', 'rgb565',
-                    '-f', 'fbdev',
-                    '/dev/fb0'
                 ]
                 
-                # Añadir audio usando ALSA si está disponible
+                # Parámetros de video
+                ffmpeg_cmd.extend([
+                    '-vf', 'scale=1920:1080',
+                    '-pix_fmt', 'rgb565',
+                    '-vsync', 'cfr'  # Sincronización de frames constante
+                ])
+                
+                # Parámetros de audio (si está disponible)
                 if self.has_audio:
                     ffmpeg_cmd.extend([
-                        '-f', 'alsa',
                         '-ac', '2',       # 2 canales (estéreo)
-                        'sysdefault:CARD=vc4hdmi0'  # Dispositivo que funcionó en las pruebas
+                        '-async', '1'     # Sincronización de audio automática
                     ])
-                    log("FFMPEG", "info", "Audio habilitado con dispositivo específico sysdefault:CARD=vc4hdmi0")
+                    log("FFMPEG", "info", "Audio habilitado con sincronización")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
+                
+                # Dispositivos de salida
+                ffmpeg_cmd.extend([
+                    '-f', 'fbdev',
+                    '/dev/fb0'
+                ])
+                
+                # Añadir salida de audio solo si está disponible
+                if self.has_audio:
+                    ffmpeg_cmd.extend([
+                        '-f', 'alsa',
+                        'sysdefault:CARD=vc4hdmi0'  # Dispositivo que funcionó en las pruebas
+                    ])
                 
                 log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
                 
