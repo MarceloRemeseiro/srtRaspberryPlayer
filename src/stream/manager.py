@@ -247,25 +247,25 @@ class StreamManager:
                 f.write('# Script generado automáticamente para MPV con diagnóstico\n')
                 f.write(f'# Fecha: {time.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
                 
-                # Comando MPV con opciones optimizadas para estabilidad de decodificación
-                f.write(f'mpv "{srt_url}" --fullscreen --audio-device=alsa/sysdefault:CARD=vc4hdmi0 --volume=100 \\\n')
+                # Comando MPV optimizado para Raspberry Pi con aceleración hardware
+                f.write(f'mpv "{srt_url}" \\\n')
+                f.write('  --fullscreen \\\n')
+                f.write('  --audio-device=alsa/sysdefault:CARD=vc4hdmi0 \\\n')
+                f.write('  --volume=100 \\\n')
                 f.write('  --msg-level=all=debug \\\n')  # Modo debug para todos los módulos
                 f.write(f'  --log-file="{log_file}" \\\n')  # Archivo de log detallado
-                f.write('  --idle=once \\\n')  # Mantener vivo brevemente si hay errores
-                f.write('  --keep-open=no \\\n')  # No quedarse abierto al terminar
-                f.write('  --hwdec=auto-safe \\\n')  # Decodificación por hardware más conservadora
-                f.write('  --profile=low-latency \\\n')  # Perfil de baja latencia
-                f.write('  --untimed \\\n')  # Ignora temporizaciones estrictas en decodificación
-                f.write('  --vd-lavc-threads=2 \\\n')  # Limitar hilos de decodificación
-                f.write('  --cache=yes \\\n')  # Activar caché 
-                f.write('  --cache-secs=10 \\\n')  # Caché de 10 segundos
-                f.write('  --demuxer-max-bytes=50MiB \\\n')  # Aumentar buffer del demuxer
-                f.write('  --demuxer-readahead-secs=10 \\\n')  # Leer más adelante
+                f.write('  --hwdec=mmal \\\n')  # Aceleración hardware específica para Raspberry Pi
+                f.write('  --vo=rpi \\\n')  # Output de video específico para Raspberry Pi
+                f.write('  --cache=yes \\\n')  # Activar caché
+                f.write('  --cache-secs=5 \\\n')  # Caché de 5 segundos (más conservador)
+                f.write('  --demuxer-max-bytes=20MiB \\\n')  # Buffer para el demuxer
                 f.write('  --network-timeout=10 \\\n')  # Tiempo de espera de red
                 f.write('  --srt-latency=2000 \\\n')  # Latencia SRT específica
-                f.write('  --hr-seek-framedrop=no \\\n')  # No descartar frames en búsqueda
-                f.write('  --vd-lavc-skiploopfilter=nonref \\\n')  # Saltar filtro de bucle para frames no referenciados
-                f.write('  --vd-lavc-skipframe=nonref\n')  # Saltar frames no referenciados
+                f.write('  --vd-lavc-threads=2 \\\n')  # Limitar hilos de decodificación
+                f.write('  --idle=once \\\n')  # Mantener vivo brevemente si hay errores
+                f.write('  --untimed \\\n')  # Útil para streams con problemas de temporización
+                f.write('  --no-resume-playback \\\n')  # No reanudar la reproducción
+                f.write('  --keep-open=no\n')  # No quedarse abierto al terminar
                 
                 # Añadir código para recolectar información post-ejecución
                 f.write('\n# Información post-ejecución\n')
