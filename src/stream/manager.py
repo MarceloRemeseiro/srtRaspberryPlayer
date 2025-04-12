@@ -138,18 +138,33 @@ class StreamManager:
             return False
 
     def stop_ffmpeg(self):
+        # Detener proceso principal
         if self.ffmpeg_process:
-            log("FFMPEG", "info", "Deteniendo FFmpeg")
+            log("FFMPEG", "info", "Deteniendo FFmpeg principal")
             try:
                 self.ffmpeg_process.terminate()
                 self.ffmpeg_process.wait(timeout=3)
             except Exception as e:
-                log("FFMPEG", "error", f"Error deteniendo FFmpeg: {e}")
+                log("FFMPEG", "error", f"Error deteniendo FFmpeg principal: {e}")
                 try:
                     self.ffmpeg_process.kill()
                 except:
                     pass
             self.ffmpeg_process = None
+        
+        # Detener proceso de audio si existe
+        if hasattr(self, 'ffmpeg_audio_process') and self.ffmpeg_audio_process:
+            log("FFMPEG", "info", "Deteniendo FFmpeg audio")
+            try:
+                self.ffmpeg_audio_process.terminate()
+                self.ffmpeg_audio_process.wait(timeout=3)
+            except Exception as e:
+                log("FFMPEG", "error", f"Error deteniendo FFmpeg audio: {e}")
+                try:
+                    self.ffmpeg_audio_process.kill()
+                except:
+                    pass
+            self.ffmpeg_audio_process = None
 
     def stream_video(self):
         current_time = time.time()
@@ -192,25 +207,33 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando FFmpeg simplificado para evitar problemas de decodificación
-                ffmpeg_cmd = [
+                # Configuración probada para SRT en Raspberry Pi
+                # Comando básico para video
+                ffmpeg_video_cmd = [
                     'ffmpeg',
+                    # Nivel de log y configuración básica
                     '-loglevel', 'warning',
-                    # Parámetros para reducir latencia pero sin opciones problemáticas
-                    '-fflags', 'nobuffer',
-                    '-flags', 'low_delay',
-                    '-probesize', '32',
-                    '-analyzeduration', '0',
-                    # Input principal
+                    # Configuración de entrada que funciona bien con SRT
                     '-i', srt_url,
-                    # Configuración de procesamiento
-                    '-threads', '2',
-                    # Configuración de salida de video
+                    # Formato de salida para framebuffer
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '/dev/fb0'
                 ]
                 
+                # Comando básico para solo audio en un proceso separado
+                ffmpeg_audio_cmd = [
+                    'ffmpeg',
+                    '-loglevel', 'warning',
+                    '-i', srt_url,
+                    '-vn',  # Sin video
+                    '-f', 'alsa',
+                    '-ac', '2',
+                    'sysdefault:CARD=vc4hdmi0'
+                ]
+                
+                # Primero intentar la reproducción con todo integrado (más eficiente)
+                ffmpeg_cmd = ffmpeg_video_cmd.copy()
                 # Añadir audio usando ALSA si está disponible
                 if self.has_audio:
                     ffmpeg_cmd.extend([
@@ -218,16 +241,17 @@ class StreamManager:
                         '-ac', '2',
                         'sysdefault:CARD=vc4hdmi0'
                     ])
-                    log("FFMPEG", "info", "Audio habilitado")
+                    log("FFMPEG", "info", "Audio habilitado en modo integrado")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
                 
-                log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
+                log("FFMPEG", "debug", f"Comando integrado: {' '.join(ffmpeg_cmd)}")
                 
                 # Registrar el tiempo de inicio para estadísticas
                 self.last_ffmpeg_start = time.time()
                 
+                # Intentar primero con todo integrado
                 self.ffmpeg_process = subprocess.Popen(
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
@@ -235,7 +259,45 @@ class StreamManager:
                     universal_newlines=True
                 )
                 
-                log("FFMPEG", "success", "Proceso iniciado")
+                # Verificar inmediatamente si se inició bien
+                time.sleep(1)
+                if self.ffmpeg_process.poll() is not None:
+                    log("FFMPEG", "warning", "El modo integrado falló, intentando solo video...")
+                    
+                    # Si falló, intentar solo con video
+                    self.ffmpeg_process = subprocess.Popen(
+                        ffmpeg_video_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        universal_newlines=True
+                    )
+                    
+                    # Verificar si el video solo funciona
+                    time.sleep(1)
+                    if self.ffmpeg_process.poll() is None:
+                        log("FFMPEG", "success", "Video iniciado correctamente")
+                        
+                        # Si tenemos audio, iniciarlo en un proceso separado
+                        if self.has_audio:
+                            try:
+                                # Iniciar un proceso separado para audio
+                                log("FFMPEG", "info", "Iniciando audio separado...")
+                                self.ffmpeg_audio_process = subprocess.Popen(
+                                    ffmpeg_audio_cmd,
+                                    stdout=subprocess.PIPE, 
+                                    stderr=subprocess.PIPE,
+                                    universal_newlines=True
+                                )
+                                log("FFMPEG", "success", "Audio iniciado en proceso separado")
+                            except Exception as e:
+                                log("FFMPEG", "error", f"Error iniciando audio: {e}")
+                                self.ffmpeg_audio_process = None
+                    else:
+                        log("FFMPEG", "error", "No se pudo iniciar la reproducción de video")
+                        self.ffmpeg_process = None
+                        return
+                else:
+                    log("FFMPEG", "success", "Proceso integrado iniciado correctamente")
                 
                 # Iniciar monitoreo
                 self._start_simple_monitor()
