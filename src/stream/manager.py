@@ -26,60 +26,35 @@ class StreamManager:
         try:
             log("AUDIO", "info", "Verificando ALSA para audio HDMI...")
             
-            # Crear/verificar configuración ALSA
+            # Verificar dispositivos ALSA con aplay -L (más completo)
             try:
-                if not os.path.exists('/etc/asound.conf'):
-                    log("AUDIO", "info", "Creando configuración ALSA para HDMI...")
-                    with open('/etc/asound.conf', 'w') as f:
-                        f.write('pcm.!default {\n')
-                        f.write('    type hw\n')
-                        f.write('    card 0\n')
-                        f.write('    device 0\n')
-                        f.write('}\n\n')
-                        f.write('ctl.!default {\n')
-                        f.write('    type hw\n')
-                        f.write('    card 0\n')
-                        f.write('}\n')
-                    log("AUDIO", "success", "Configuración ALSA creada correctamente")
-                else:
-                    log("AUDIO", "info", "Configuración ALSA ya existe")
-            except Exception as e:
-                log("AUDIO", "warning", f"Error creando configuración ALSA: {e}")
-            
-            # Configurar HDMI como salida de audio
-            try:
-                subprocess.run(['amixer', 'cset', 'numid=3', '2'], 
-                              stdout=subprocess.PIPE, 
-                              stderr=subprocess.PIPE)
-                log("AUDIO", "info", "HDMI configurado como salida de audio (amixer cset numid=3 2)")
-            except Exception as e:
-                log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
-            
-            # Verificar dispositivos ALSA
-            try:
-                alsa_devices = subprocess.run(['aplay', '-l'], 
+                alsa_devices = subprocess.run(['aplay', '-L'], 
                                            stdout=subprocess.PIPE, 
                                            stderr=subprocess.PIPE,
                                            text=True)
                 
-                if "HDMI" in alsa_devices.stdout:
-                    log("AUDIO", "success", "Dispositivo HDMI encontrado en ALSA")
+                if "hdmi:" in alsa_devices.stdout.lower():
+                    hdmi_devices = [line for line in alsa_devices.stdout.split('\n') if "hdmi:" in line.lower()]
+                    log("AUDIO", "success", f"Dispositivos HDMI encontrados: {', '.join(hdmi_devices)}")
+                    
+                    # Configurar HDMI como salida principal
+                    subprocess.run(['amixer', 'cset', 'numid=3', '2'], 
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    log("AUDIO", "info", "HDMI configurado como salida principal")
+                    
+                    # Establecer volumen al máximo
+                    subprocess.run(['amixer', 'set', 'Master', '100%'], 
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    log("AUDIO", "info", "Volumen configurado al máximo")
+                    
                     return True
                 else:
-                    log("AUDIO", "warning", f"No se encontró dispositivo HDMI en ALSA: {alsa_devices.stdout}")
+                    log("AUDIO", "warning", "No se encontró ningún dispositivo HDMI en ALSA")
             except Exception as e:
-                log("AUDIO", "warning", f"Error listando dispositivos ALSA: {e}")
+                log("AUDIO", "warning", f"Error verificando dispositivos ALSA: {e}")
             
-            # Configurar volumen al máximo
-            try:
-                subprocess.run(['amixer', 'set', 'Master', '100%'], check=False,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                log("AUDIO", "info", "Volumen configurado")
-            except Exception as e:
-                log("AUDIO", "warning", f"Error configurando volumen: {e}")
-                
-            # Si llegamos aquí, igual consideramos que hay audio y lo intentamos
-            log("AUDIO", "info", "Asumiendo que hay audio HDMI disponible para intentar la reproducción")
+            # Incluso si no pudimos verificar, asumimos que hay audio y lo intentamos
+            log("AUDIO", "info", "Asumiendo que hay audio disponible")
             return True
             
         except Exception as e:
@@ -209,7 +184,7 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando FFmpeg lo más simple posible
+                # Comando FFmpeg básico que ya está funcionando para video
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-i', fixed_srt_url,
@@ -218,9 +193,17 @@ class StreamManager:
                     '/dev/fb0'
                 ]
                 
-                # Deshabilitar audio temporalmente hasta que el video sea estable
-                ffmpeg_cmd.append('-an')
-                log("FFMPEG", "info", "Audio desactivado temporalmente para pruebas")
+                # Añadir audio como salida separada
+                if self.has_audio:
+                    ffmpeg_cmd.extend([
+                        '-f', 'alsa',
+                        '-ac', '2',       # 2 canales (estéreo)
+                        'hw:0,0'          # Dispositivo HDMI directo
+                    ])
+                    log("FFMPEG", "info", "Audio habilitado con dispositivo HDMI hardware hw:0,0")
+                else:
+                    ffmpeg_cmd.append('-an')
+                    log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
                 
                 log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
                 
