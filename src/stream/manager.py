@@ -207,132 +207,158 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Configuración optimizada para SRT basada en la documentación de FFmpeg
-                log("FFMPEG", "info", "Configurando parámetros optimizados para SRT")
+                # Modificamos la estrategia para resolver problemas de decodificación y ALSA
                 
-                # Parámetros base para todos los modos (con o sin audio)
-                base_params = [
+                # 1. Primero enfocarse solo en video, desactivando audio temporalmente
+                # Esto permite verificar si la conexión SRT funciona correctamente
+                log("FFMPEG", "info", "Intentando reproducción con solo video para probar conexión SRT")
+                
+                # Parámetros básicos para solo video (mayor estabilidad)
+                video_solo_cmd = [
                     'ffmpeg',
-                    # Nivel de logs para diagnóstico
-                    '-loglevel', 'warning',
-                    # Incluir estadísticas
-                    '-stats',
-                    # Parámetros de buffer y rendimiento
-                    '-rtbufsize', '16M',    # Buffer más grande para estabilidad
-                    '-rw_timeout', '5000000',  # 5 segundos de timeout de lectura
-                    # Parámetros para sincronización
-                    '-async', '1',           # Sincronización automática de audio
-                    '-vsync', '1',           # Mantener sincronización de video constante
-                    # Entrada SRT
-                    '-i', srt_url,
-                ]
-                
-                # Selección de output streams (mapeado explícito para control ordenado)
-                output_params = []
-                
-                # Configurar salida de video siempre
-                video_params = [
-                    # Seleccionar stream de video
-                    '-map', '0:v:0',
-                    # Configuración de salida de video
+                    # Nivel de log detallado para diagnóstico
+                    '-loglevel', 'info',
+                    # Parámetros SRT críticos incrustados en URL para mejor conexión
+                    '-i', f"{srt_url}&latency=1000&tlpktdrop=0&nakreport=1",
+                    # Opción clave para problemas de decodificación H264
+                    '-err_detect', 'ignore_err',
+                    # Usar decoder de software para mejor compatibilidad
+                    '-c:v', 'h264',
+                    # Saltar frames corruptos
+                    '-skip_frame', 'noref',
+                    # Decodificación más permisiva
+                    '-flags2', '+ignorecrop',
+                    # Indicar formato de salida para evitar errores de conversión
                     '-pix_fmt', 'rgb565',
-                    '-f', 'fbdev',
+                    # Salida a framebuffer
+                    '-f', 'fbdev', 
                     '/dev/fb0'
                 ]
                 
-                # Configurar salida de audio si está disponible
-                if self.has_audio:
-                    audio_params = [
-                        # Seleccionar stream de audio
-                        '-map', '0:a:0',
-                        # Resampling adaptativo para mejor sincronización
-                        '-af', 'aresample=async=1000',
-                        # Configuración de salida de audio
-                        '-f', 'alsa',
-                        '-ac', '2',     # Estéreo
-                        'sysdefault:CARD=vc4hdmi0'       # Dispositivo estándar ALSA
-                    ]
-                    log("FFMPEG", "info", "Audio habilitado con sincronización mejorada")
-                    
-                    # Construir comando completo con audio
-                    ffmpeg_cmd = base_params + video_params + audio_params
-                else:
-                    # Sin audio
-                    log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
-                    ffmpeg_cmd = base_params + ['-an'] + video_params
+                log("FFMPEG", "debug", f"Comando inicial (solo video): {' '.join(video_solo_cmd)}")
                 
-                # Registrar comando para diagnóstico
-                log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
-                
-                # Iniciar el proceso FFmpeg
+                # Iniciar proceso solo con video primero
                 self.last_ffmpeg_start = time.time()
                 self.ffmpeg_process = subprocess.Popen(
-                    ffmpeg_cmd,
+                    video_solo_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     universal_newlines=True
                 )
                 
-                # Verificar si se inició correctamente
-                time.sleep(1)
+                # Verificar si se inició correctamente el video
+                time.sleep(2)
                 if self.ffmpeg_process.poll() is None:
-                    log("FFMPEG", "success", "Proceso FFmpeg iniciado correctamente")
+                    log("FFMPEG", "success", "Proceso de solo video iniciado correctamente")
                     
-                    # Si el primer intento fue exitoso, iniciar monitoreo
-                    self._start_enhanced_monitor()
-                else:
-                    # Si falló, intentar con una configuración alternativa
-                    log("FFMPEG", "warning", "La configuración inicial falló, probando configuración alternativa...")
-                    
-                    # Opción alternativa: usar FFmpeg con menos opciones
-                    alt_cmd = [
-                        'ffmpeg',
-                        '-loglevel', 'warning',
-                        '-i', srt_url
-                    ]
-                    
-                    # Agregar salida de video
-                    alt_cmd.extend([
-                        '-pix_fmt', 'rgb565',
-                        '-f', 'fbdev',
-                        '/dev/fb0'
-                    ])
-                    
-                    # Agregar salida de audio si está disponible
-                    if self.has_audio:
-                        alt_cmd.extend([
-                            '-f', 'alsa',
-                            '-ac', '2',
-                            'default'
-                        ])
-                    else:
-                        alt_cmd.append('-an')
-                    
-                    log("FFMPEG", "info", f"Comando alternativo: {' '.join(alt_cmd)}")
-                    
-                    # Iniciar proceso alternativo
-                    self.ffmpeg_process = subprocess.Popen(
-                        alt_cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        universal_newlines=True
-                    )
-                    
-                    # Verificar si se inició correctamente
+                    # Si el video funciona por 3 segundos, intentar con audio
                     time.sleep(1)
                     if self.ffmpeg_process.poll() is None:
-                        log("FFMPEG", "success", "Proceso alternativo iniciado correctamente")
+                        log("FFMPEG", "info", "Video estable, iniciando monitoreo...")
                         self._start_enhanced_monitor()
                     else:
-                        # Capturar errores para diagnóstico
-                        log("FFMPEG", "error", "Ambos intentos fallaron")
-                        if self.ffmpeg_process:
-                            try:
-                                error_output = self.ffmpeg_process.stderr.read()
-                                log("FFMPEG", "error", f"Error FFmpeg: {error_output[:500]}...")
-                            except Exception as e:
-                                log("FFMPEG", "error", f"Error leyendo stderr: {e}")
-                        self.ffmpeg_process = None
+                        # Si falló el video, intentar configuración alternativa SRT
+                        log("FFMPEG", "warning", "El proceso solo video falló, probando parámetros SRT alternativos...")
+                        error_output = ""
+                        try:
+                            error_output = self.ffmpeg_process.stderr.read(1000)
+                        except:
+                            pass
+                        
+                        log("FFMPEG", "error", f"Error inicial: {error_output}")
+                        
+                        # Intentar con parámetros SRT explícitos como opción separada
+                        alt_srt_cmd = [
+                            'ffmpeg',
+                            '-loglevel', 'info',
+                            # Formato SRT explícito  
+                            '-f', 'srt',
+                            # Opciones para ignorar errores
+                            '-err_detect', 'ignore_err',
+                            '-fflags', '+igndts+genpts+discardcorrupt',
+                            # URL sin parámetros adicionales
+                            '-i', srt_url,
+                            # Evitar optimizaciones PTS para mejor compatibilidad
+                            '-vsync', '0',
+                            # Mapeado explícito
+                            '-map', '0:v:0',
+                            # Ignorar audio
+                            '-an',
+                            # Salida
+                            '-pix_fmt', 'rgb565',
+                            '-f', 'fbdev',
+                            '/dev/fb0'
+                        ]
+                        
+                        log("FFMPEG", "info", f"Comando alternativo SRT: {' '.join(alt_srt_cmd)}")
+                        
+                        # Iniciar proceso alternativo
+                        self.ffmpeg_process = subprocess.Popen(
+                            alt_srt_cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            universal_newlines=True
+                        )
+                        
+                        # Verificar si se inició correctamente
+                        time.sleep(2)
+                        if self.ffmpeg_process.poll() is None:
+                            log("FFMPEG", "success", "Proceso alternativo SRT iniciado correctamente")
+                            self._start_enhanced_monitor()
+                        else:
+                            # Si ambos métodos fallan, intentar como última opción un enfoque más básico
+                            log("FFMPEG", "error", "Ambos métodos SRT fallaron, intentando enfoque básico...")
+                            
+                            # Intentar con configuración mínima (último recurso)
+                            minimal_cmd = [
+                                'ffmpeg',
+                                '-loglevel', 'info',
+                                # Use timeout para cortar rápido si hay problemas
+                                '-timeout', '5000000',
+                                # Modo de espera indefinida para SRT si hay problemas
+                                '-listen_timeout', '-1',
+                                # SRT básico
+                                '-i', srt_url,
+                                # Salida directa sin procesar
+                                '-c:v', 'copy',
+                                '-an',
+                                '-f', 'fbdev',
+                                '/dev/fb0'
+                            ]
+                            
+                            log("FFMPEG", "info", f"Comando mínimo: {' '.join(minimal_cmd)}")
+                            
+                            self.ffmpeg_process = subprocess.Popen(
+                                minimal_cmd,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                universal_newlines=True
+                            )
+                            
+                            time.sleep(2)
+                            if self.ffmpeg_process.poll() is None:
+                                log("FFMPEG", "success", "Proceso mínimo iniciado correctamente")
+                                self._start_enhanced_monitor()
+                            else:
+                                log("FFMPEG", "error", "Todos los métodos de reproducción fallaron")
+                                error_output = ""
+                                try:
+                                    error_output = self.ffmpeg_process.stderr.read(1000)
+                                except:
+                                    pass
+                                
+                                log("FFMPEG", "error", f"Error final: {error_output}")
+                                self.ffmpeg_process = None
+                else:
+                    log("FFMPEG", "error", "El proceso inicial falló inmediatamente")
+                    error_output = ""
+                    try:
+                        error_output = self.ffmpeg_process.stderr.read(1000)
+                    except:
+                        pass
+                    
+                    log("FFMPEG", "error", f"Error: {error_output}")
+                    self.ffmpeg_process = None
             except Exception as e:
                 log("FFMPEG", "error", f"Error iniciando proceso FFmpeg: {e}")
                 self.ffmpeg_process = None
@@ -376,24 +402,28 @@ class StreamManager:
                         error_count += 1
                         
                         # Filtrar errores conocidos para no saturar logs
-                        if 'decode_slice_header' in err or 'Invalid data found' in err:
+                        if 'decode_slice_header' in err or 'non-existing PPS' in err or 'no frame' in err:
+                            # Estos son errores comunes de H.264, no son críticos a menos que sean muchos
                             if error_count % 20 == 0:
-                                log("FFMPEG", "warning", f"Errores de decodificación: {error_count}")
+                                log("FFMPEG", "warning", f"Errores de decodificación H.264: {error_count}")
+                        elif 'alsa' in err.lower():
+                            # Error de audio ALSA, ignorable para seguir con video
+                            log("FFMPEG", "warning", f"Error de audio ALSA detectado: {err}")
                         else:
                             log("FFMPEG", "error", f"Error FFmpeg: {err}")
                         
                         # Reiniciar si hay demasiados errores
-                        if error_count > 20:
+                        if error_count > 30:  # Permitir más errores antes de reiniciar
                             log("FFMPEG", "error", f"Demasiados errores ({error_count}), reiniciando...")
                             break
                 
                 # Verificar timeout - si no recibimos frames por mucho tiempo
-                if time.time() - last_frame_time > 10:
+                if time.time() - last_frame_time > 15:  # Incrementar timeout a 15 segundos
                     error_count += 5
-                    log("FFMPEG", "warning", "No se han recibido frames en 10 segundos")
+                    log("FFMPEG", "warning", "No se han recibido frames en 15 segundos")
                     last_frame_time = time.time()  # Resetear para evitar múltiples mensajes
                     
-                    if error_count > 15:
+                    if error_count > 20:
                         log("FFMPEG", "error", "Timeout de frames, reiniciando proceso...")
                         break
                 
