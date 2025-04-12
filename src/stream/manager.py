@@ -187,15 +187,15 @@ class StreamManager:
             return
         
         # URL SRT fija que sabemos que funciona
-        # Formato SRT estándar
-        fixed_srt_url = "srt://core.streamingpro.es:6000?streamid=7bb5ff4b-9470-4ff0-b5ff-16af476e8c1f&mode=caller&transtype=live"
+        # Formato SRT con streamid (necesario) pero sin otros parámetros
+        fixed_srt_url = "srt://core.streamingpro.es:6000/?mode=caller&transtype=live&streamid=7bb5ff4b-9470-4ff0-b5ff-16af476e8c1f,mode:request"
         
         # Si FFmpeg no está corriendo, iniciarlo
         if not self.ffmpeg_process or (self.ffmpeg_process and self.ffmpeg_process.poll() is not None):
-            log("STREAM", "info", f"Iniciando reproducción con URL simplificada: {fixed_srt_url}")
+            log("STREAM", "info", f"Iniciando reproducción con URL básica: {fixed_srt_url}")
             
             try:
-                # Configuración optimizada para estabilidad
+                # Configuración optimizada para estabilidad, sólo opciones compatibles
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-loglevel', 'debug',          # Log detallado para diagnóstico
@@ -203,9 +203,7 @@ class StreamManager:
                     # Aumentar buffer para mayor estabilidad
                     '-buffer_size', '16384k',      # Buffer grande
                     '-fflags', '+genpts+ignidx',   # Generar timestamps
-                    # Añadir parámetros específicos para SRT
-                    '-srt_maxbw', '8000000',       # Ancho de banda máximo 8Mbps
-                    '-srt_latency', '2000',        # Mayor latencia para estabilidad
+                    # Quitar opciones incompatibles: srt_maxbw, srt_latency
                     '-i', fixed_srt_url,
                     # Evitar filtros innecesarios para reducir carga de CPU
                     '-pix_fmt', 'rgb565',
@@ -221,8 +219,10 @@ class StreamManager:
                         '-f', 'alsa',
                         '-ac', '2',                # 2 canales
                         '-ar', '44100',            # Frecuencia de muestreo
-                        # Reducir tamaño del buffer para minimizar retardo
-                        '-alsa_buffer_size', '1024',
+                        # Opciones de sincronización audio-video
+                        '-async', '1',             # Sincronización simple
+                        # La opción alsa_buffer_size puede no ser compatible,
+                        # usar buffer_size normal de ALSA
                         'default'                  # Dispositivo predeterminado
                     ])
                 else:
