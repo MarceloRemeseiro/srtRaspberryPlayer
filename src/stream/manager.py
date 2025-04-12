@@ -104,28 +104,22 @@ class StreamManager:
                 # Reconfigurar HDMI como salida 
                 self._setup_audio()
                 
-                # Opciones simplificadas para MPV que funcionan bien en la práctica
+                # Opciones para MPV con parámetros de rendimiento (sin aceleración hardware)
                 mpv_cmd = [
                     'mpv',                                         # Reproductor MPV
                     srt_url,                                       # URL SRT directa
                     '--fullscreen',                                # Pantalla completa
                     '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',# Dispositivo de audio HDMI
                     '--volume=100',                                # Volumen al máximo
-                    # Parámetros clave para tolerancia a errores
-                    '--hr-seek=no',                                # Búsqueda menos precisa pero más estable
-                    '--vd-lavc-skiploopfilter=all',                # Saltar filtros de bucle para mejorar rendimiento
-                    '--vd-lavc-skip-idct=all',                     # Saltar IDCT para mejorar rendimiento
-                    '--vd-lavc-framedrop=decoder',                 # Descartar cuadros en el decodificador si es necesario
-                    '--error-diffusion=100',                       # Difusión de error para suavizar errores visuales
-                    '--opengl-swapinterval=0',                     # Desactivar vsync para mejor rendimiento
-                    '--hwdec=auto',                                # Usar decodificación por hardware si está disponible
-                    '--no-correct-pts',                            # No corregir timestamps, mejor para streams
+                    # Parámetros para mejorar estabilidad y rendimiento
+                    '--cache=yes',                                 # Habilitar caché
+                    '--cache-secs=2',                              # Caché pequeño (2 segundos)
+                    '--framedrop=vo',                              # Descartar frames si es necesario
                     '--video-sync=audio',                          # Sincronizar video con audio
-                    '--cache=yes',                                 # Usar caché
-                    '--cache-secs=5'                               # Caché de 5 segundos (valor más bajo para menos latencia)
+                    '--untimed'                                    # Desactivar temporización estricta
                 ]
                 
-                log("STREAM", "info", f"Iniciando MPV con configuración optimizada para estabilidad")
+                log("STREAM", "info", f"Iniciando MPV con optimizaciones de rendimiento básicas")
                 
                 # Iniciar MPV
                 self.player_process = subprocess.Popen(
