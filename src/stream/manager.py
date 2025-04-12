@@ -114,20 +114,12 @@ class StreamManager:
                     # Parámetros para prevenir congelaciones
                     '--cache=yes',                                 # Habilitar caché
                     '--cache-secs=5',                              # Caché de 5 segundos (aumentado)
-                    '--demuxer-max-backoff=10000000',              # Buffer máximo más grande
                     '--network-timeout=5',                         # Timeout de red más corto
                     '--framedrop=decoder+vo',                      # Saltar frames agresivamente
                     '--video-sync=display-resample',               # Mejor sincronización de vídeo
                     '--untimed',                                   # Desactivar temporización estricta
-                    '--stream-lavf-o=reconnect=1',                 # Activar reconexión
-                    '--stream-lavf-o=reconnect_streamed=1',        # Reconectar en streaming
-                    '--stream-lavf-o=reconnect_delay_max=2',       # Retraso máximo de reconexión
-                    '--hr-seek=yes',                               # Búsqueda precisa para recuperar
-                    '--force-seekable=yes',                        # Forzar capacidad de búsqueda
                     '--keep-open=always',                          # Mantener abierto aunque haya errores
-                    '--reset-on-next-file=all',                    # Reiniciar todos los ajustes entre errores
                     '--no-correct-pts',                            # Desactivar corrección de timestamps
-                    '--input-ipc-server=/tmp/mpvsocket'            # Socket para control externo
                 ]
                 
                 log("STREAM", "info", f"Iniciando MPV con parámetros avanzados anti-congelación")
