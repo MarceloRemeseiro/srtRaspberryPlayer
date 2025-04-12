@@ -134,17 +134,66 @@ class StreamManager:
                     'ffmpeg',
                     '-loglevel', 'info',
                     '-protocol_whitelist', 'file,udp,rtp,srt',  # Permitir protocolo SRT
-                    '-fflags', '+discardcorrupt',  # Descartar paquetes corruptos
+                    '-fflags', '+discardcorrupt+igndts',  # Descartar paquetes corruptos
+                    '-err_detect', 'ignore_err',  # Ignorar errores
                     '-analyzeduration', '2000000',  # Aumentar duración de análisis
+                    '-timeout', '5000000',  # Timeout para SRT
                     '-i', fixed_srt_url,
-                    '-vf', 'scale=1280:720',
+                    '-threads', '4',  # Usar 4 hilos para decodificación
+                ]
+                
+                # Intentar con decodificador hardware si está disponible
+                try:
+                    # Verificar si el decodificador hardware está disponible
+                    hw_check = subprocess.run(
+                        ['ffmpeg', '-codecs'], 
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.PIPE, 
+                        text=True
+                    )
+                    
+                    if 'h264_v4l2m2m' in hw_check.stdout:
+                        log("FFMPEG", "info", "Usando decodificador hardware h264_v4l2m2m")
+                        ffmpeg_cmd.extend(['-c:v', 'h264_v4l2m2m'])
+                    else:
+                        log("FFMPEG", "info", "Decodificador hardware no disponible, usando software")
+                except:
+                    log("FFMPEG", "info", "Error verificando decodificadores, usando software")
+                
+                # Añadir opciones de video
+                ffmpeg_cmd.extend([
+                    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',  # Forzar pantalla completa
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '-y', '/dev/fb0'
-                ]
+                ])
                 
-                # Desactivar audio para simplificar
-                ffmpeg_cmd.append('-an')
+                # Añadir audio si está disponible
+                if self.has_audio:
+                    # Probar diferentes configuraciones de audio
+                    log("FFMPEG", "info", "Configurando salida de audio...")
+                    
+                    # Opción 1: Usar dispositivo default
+                    ffmpeg_cmd.extend([
+                        '-f', 'alsa',
+                        '-ac', '2',     # 2 canales
+                        '-ar', '44100', # Frecuencia de muestreo
+                        'default'       # Dispositivo predeterminado
+                    ])
+                    log("FFMPEG", "info", "Usando dispositivo de audio: default")
+                    
+                    # Alternativa si la configuración anterior falla:
+                    # ffmpeg_cmd.extend([
+                    #     '-f', 'alsa',
+                    #     '-device_name', 'hw:0,0',
+                    #     '-ac', '2',
+                    #     '-ar', '44100',
+                    #     'hw:0,0'
+                    # ])
+                else:
+                    # Desactivar audio si no hay dispositivo
+                    ffmpeg_cmd.append('-an')
+                    log("FFMPEG", "warning", "Reproduciendo sin audio (no hay dispositivo disponible)")
                 
                 # Mostrar el comando completo para depuración
                 log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
@@ -168,18 +217,42 @@ class StreamManager:
     def _start_simple_monitor(self):
         """Monitoreo simplificado de la salida"""
         def simple_monitor():
+            frame_count = 0
+            start_time = time.time()
+            last_status_time = 0
+            
             while self.ffmpeg_process and self.ffmpeg_process.poll() is None:
-                # Solo leer y mostrar errores importantes
+                # Leer stderr (donde FFmpeg escribe sus logs)
                 err = self.ffmpeg_process.stderr.readline()
-                if err and 'error' in err.lower():
-                    log("FFMPEG", "error", err.strip())
+                if err:
+                    err = err.strip()
+                    
+                    if 'frame=' in err:
+                        # Es una línea de progreso, actualizar contador
+                        try:
+                            frame_count += 1
+                            current_time = time.time()
+                            
+                            # Mostrar estado cada 5 segundos
+                            if current_time - last_status_time > 5:
+                                log("FFMPEG", "info", f"Reproduciendo: {err}")
+                                last_status_time = current_time
+                        except:
+                            pass
+                    elif 'error' in err.lower() and 'decode_slice_header error' not in err:
+                        # Error importante (ignorar errores repetitivos de slice_header)
+                        log("FFMPEG", "error", err)
+                    elif 'audio:' in err.lower() or 'video:' in err.lower() or 'stream mapping:' in err.lower():
+                        # Información relevante
+                        log("FFMPEG", "info", err)
                 
                 # Dormir para reducir uso de CPU
                 time.sleep(0.1)
             
             # Cuando termine, reiniciar automáticamente
             if self.ffmpeg_process:
-                log("FFMPEG", "info", "Proceso terminado, reiniciando...")
+                running_time = time.time() - start_time
+                log("FFMPEG", "info", f"Proceso terminado después de {int(running_time)}s y {frame_count} frames")
                 self.ffmpeg_process = None
                 
                 # Esperar 2 segundos antes de reiniciar
