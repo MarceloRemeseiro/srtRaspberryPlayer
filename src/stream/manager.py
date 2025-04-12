@@ -2,6 +2,7 @@ import time
 import subprocess
 import os
 import signal
+import tempfile
 from config.settings import CONFIG_CHECK_INTERVAL
 from display.screen import show_default_image
 from network.client import get_srt_url, log
@@ -13,10 +14,11 @@ class StreamManager:
         self.last_srt_url = None
         # URL de prueba - para diagnosticar problema de congelación
         self.test_url = "srt://core.streamingpro.es:6000/?mode=caller&transtype=live&streamid=3a6f96cd-6400-4ecf-bdcd-ed23b792ad85,mode:request"
+        self.script_path = None
         # Limpieza inicial
         self._kill_existing_players()
         self._setup_audio()
-        log("SISTEMA", "info", "StreamManager inicializado - Modo prueba directa")
+        log("SISTEMA", "info", "StreamManager inicializado - Modo shell independiente")
 
     def _kill_existing_players(self):
         """Mata cualquier proceso de reproducción existente"""
@@ -25,6 +27,12 @@ class StreamManager:
             subprocess.run(['pkill', '-9', 'vlc'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             subprocess.run(['pkill', '-9', 'cvlc'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             subprocess.run(['pkill', '-9', 'ffmpeg'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            # Terminar cualquier script shell activo
+            if self.script_path and os.path.exists(self.script_path):
+                try:
+                    os.remove(self.script_path)
+                except:
+                    pass
             time.sleep(1)
         except Exception as e:
             log("SISTEMA", "warning", f"Error matando procesos: {e}")
@@ -62,35 +70,54 @@ class StreamManager:
                 log("PLAYER", "error", f"Error deteniendo reproductor: {e}")
             
             self.player_process = None
-            self._kill_existing_players()
+        
+        # Matar todos los procesos MPV restantes
+        self._kill_existing_players()
 
-    def start_direct_player(self, srt_url):
-        """Inicia el reproductor MPV directamente como lo haces en consola"""
-        log("PRUEBA", "info", f"Iniciando MPV directamente con URL: {srt_url}")
+    def start_via_shell_script(self, srt_url):
+        """Inicia el reproductor a través de un script shell independiente"""
+        log("SHELL", "info", f"Iniciando MPV a través de shell con URL: {srt_url}")
         
         try:
-            # Comando exactamente igual al que funciona en consola
-            mpv_cmd = [
-                'mpv',
-                srt_url,
-                '--fullscreen',
-                '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',
-                '--volume=100'
-            ]
+            # Crear un script shell temporal
+            fd, script_path = tempfile.mkstemp(suffix='.sh')
+            self.script_path = script_path
             
-            # Ejecutar MPV como proceso hijo desacoplado
+            with os.fdopen(fd, 'w') as f:
+                f.write('#!/bin/bash\n\n')
+                f.write('# Script generado automáticamente para MPV\n')
+                f.write(f'# Fecha: {time.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
+                
+                # El comando exacto que funciona desde consola
+                f.write(f'mpv "{srt_url}" --fullscreen --audio-device=alsa/sysdefault:CARD=vc4hdmi0 --volume=100\n')
+                
+                # Añadir código para eliminar el script después de ejecutarse
+                f.write('\n# Eliminar este script al terminar\n')
+                f.write(f'rm -f "{script_path}"\n')
+            
+            # Hacer el script ejecutable
+            os.chmod(script_path, 0o755)
+            
+            # Ejecutar el script en segundo plano
+            log("SHELL", "info", f"Ejecutando script: {script_path}")
             process = subprocess.Popen(
-                mpv_cmd,
+                ['/bin/bash', script_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                preexec_fn=os.setpgrp  # Desacoplar del proceso padre
+                # Desconectar completamente del proceso principal
+                start_new_session=True
             )
             
-            log("PRUEBA", "info", f"MPV iniciado con PID: {process.pid}")
+            log("SHELL", "info", f"Script iniciado con PID: {process.pid}")
             return process
             
         except Exception as e:
-            log("PRUEBA", "error", f"Error iniciando MPV: {e}")
+            log("SHELL", "error", f"Error creando/ejecutando script: {e}")
+            if self.script_path and os.path.exists(self.script_path):
+                try:
+                    os.remove(self.script_path)
+                except:
+                    pass
             return None
 
     def stream_video(self):
@@ -107,8 +134,9 @@ class StreamManager:
                 # Reconfigurar audio
                 self._setup_audio()
                 
-                # Iniciar reproductor directamente como en consola
-                self.player_process = self.start_direct_player(srt_url)
+                # Iniciar MPV mediante script shell independiente
+                log("PRUEBA", "info", "Iniciando MPV mediante script shell independiente")
+                self.player_process = self.start_via_shell_script(srt_url)
                 
                 if not self.player_process:
                     log("STREAM", "error", "No se pudo iniciar el reproductor")
@@ -116,7 +144,7 @@ class StreamManager:
                 
                 # Registrar tiempo de inicio
                 self.start_time = time.time()
-                log("PRUEBA", "info", f"Reproductor iniciado a las {time.strftime('%H:%M:%S')}")
+                log("PRUEBA", "info", f"Script iniciado a las {time.strftime('%H:%M:%S')}")
                 
             except Exception as e:
                 log("STREAM", "error", f"Error iniciando reproductor: {e}")
@@ -132,7 +160,7 @@ class StreamManager:
                 if not self.player_process or self.player_process.poll() is not None:
                     if self.player_process and self.player_process.poll() is not None:
                         runtime = time.time() - self.start_time
-                        log("PRUEBA", "info", f"Reproductor terminó después de {int(runtime)} segundos con código: {self.player_process.poll()}")
+                        log("PRUEBA", "info", f"Proceso terminado después de {int(runtime)} segundos con código: {self.player_process.poll()}")
                     
                     self.stream_video()
                     start_iteration += 1
@@ -140,7 +168,21 @@ class StreamManager:
                     # Verificar cuánto tiempo lleva ejecutándose
                     runtime = time.time() - self.start_time
                     if int(runtime) % 30 == 0:  # Registrar cada 30 segundos
-                        log("PRUEBA", "info", f"Reproductor lleva {int(runtime)} segundos ejecutándose")
+                        log("PRUEBA", "info", f"Proceso lleva {int(runtime)} segundos ejecutándose")
+                        
+                        # Verificar si MPV sigue ejecutándose
+                        mpv_check = subprocess.run(
+                            "pgrep mpv", 
+                            shell=True, 
+                            stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE
+                        )
+                        
+                        if mpv_check.returncode != 0:
+                            log("PRUEBA", "warning", "No se encontró proceso MPV a pesar de que el script sigue ejecutándose")
+                            # Forzar reinicio
+                            self.stop_player()
+                            self.stream_video()
                 
                 # Dormir para no consumir CPU
                 time.sleep(1)
