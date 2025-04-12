@@ -2,6 +2,7 @@ import time
 import subprocess
 import threading
 import os
+import signal
 from config.settings import CONFIG_CHECK_INTERVAL
 from display.screen import show_default_image
 from network.client import register_device, get_srt_url, log
@@ -12,8 +13,25 @@ class StreamManager:
         self.last_config_check = time.time()
         self.last_srt_url = None
         self.failed_attempts = 0
+        # Asegurar limpieza al iniciar
+        self._kill_existing_players()
         self._setup_audio()
-        log("SISTEMA", "info", "StreamManager inicializado - Usando VLC")
+        log("SISTEMA", "info", "StreamManager inicializado - Usando MPV")
+
+    def _kill_existing_players(self):
+        """Mata cualquier proceso de reproducción existente"""
+        try:
+            log("SISTEMA", "info", "Matando procesos existentes...")
+            # Matar cualquier proceso mpv
+            subprocess.run(['pkill', '-9', 'mpv'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            # Matar cualquier proceso vlc/cvlc
+            subprocess.run(['pkill', '-9', 'vlc'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            subprocess.run(['pkill', '-9', 'cvlc'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            # Matar cualquier proceso ffmpeg
+            subprocess.run(['pkill', '-9', 'ffmpeg'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            time.sleep(1)
+        except Exception as e:
+            log("SISTEMA", "warning", f"Error matando procesos: {e}")
 
     def _setup_audio(self):
         """Configura el audio HDMI"""
@@ -37,15 +55,30 @@ class StreamManager:
         if self.player_process:
             log("PLAYER", "info", "Deteniendo reproductor")
             try:
+                # Enviar SIGTERM
                 self.player_process.terminate()
-                self.player_process.wait(timeout=3)
+                # Esperar a que termine
+                for i in range(10):  # Esperar hasta 1 segundo
+                    if self.player_process.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                
+                # Si sigue vivo después de 1 segundo, enviar SIGKILL
+                if self.player_process.poll() is None:
+                    log("PLAYER", "warning", "El proceso no respondió a SIGTERM, enviando SIGKILL")
+                    self.player_process.kill()
+                    self.player_process.wait(timeout=1)
             except Exception as e:
                 log("PLAYER", "error", f"Error deteniendo reproductor: {e}")
                 try:
-                    self.player_process.kill()
+                    # Matar al proceso con SIGKILL
+                    os.kill(self.player_process.pid, signal.SIGKILL)
                 except:
                     pass
+            
             self.player_process = None
+            # Asegurar que todos los procesos relacionados estén muertos
+            self._kill_existing_players()
 
     def stream_video(self):
         # Obtener la URL SRT del servidor
@@ -64,21 +97,26 @@ class StreamManager:
             log("STREAM", "info", f"Iniciando reproducción con SRT URL: {srt_url}")
             
             try:
+                # Asegurar limpieza previa
+                self._kill_existing_players()
+                
                 # Reconfigurar HDMI como salida 
                 self._setup_audio()
                 
-                # Opciones mínimas para VLC 
-                vlc_cmd = [
-                    'cvlc',           # VLC sin interfaz
-                    srt_url,          # URL SRT directa
-                    '--fullscreen'     # Pantalla completa
+                # Opciones para MPV que funcionan correctamente
+                mpv_cmd = [
+                    'mpv',                      # Reproductor MPV
+                    srt_url,                    # URL SRT directa
+                    '--fullscreen',             # Pantalla completa
+                    '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',  # Dispositivo de audio específico
+                    '--volume=100'              # Volumen al máximo
                 ]
                 
-                log("STREAM", "info", f"Iniciando VLC con configuración mínima: {' '.join(vlc_cmd)}")
+                log("STREAM", "info", f"Iniciando MPV con configuración optimizada: {' '.join(mpv_cmd)}")
                 
-                # Iniciar VLC
+                # Iniciar MPV
                 self.player_process = subprocess.Popen(
-                    vlc_cmd,
+                    mpv_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE
                 )
@@ -90,32 +128,44 @@ class StreamManager:
                 ).start()
                 
             except Exception as e:
-                log("STREAM", "error", f"Error iniciando reproducción con VLC: {e}")
+                log("STREAM", "error", f"Error iniciando reproducción: {e}")
                 self.player_process = None
     
     def _monitor_player(self):
         """Monitoreo simplificado para el proceso de reproducción"""
         start_time = time.time()
         
-        # Esperar a que el proceso termine
-        exit_code = self.player_process.wait()
-        
-        # Procesar resultado
-        running_time = int(time.time() - start_time)
-        log("PLAYER", "info", f"Reproductor terminado con código {exit_code} después de {running_time}s")
-        
-        # Reintentar con espera progresiva si falló rápidamente
-        if running_time < 5:
-            self.failed_attempts += 1
-            wait_time = min(30, 5 * self.failed_attempts)
-            log("PLAYER", "info", f"Intento fallido #{self.failed_attempts}, esperando {wait_time}s antes de reintentar")
-            time.sleep(wait_time)
-        else:
-            self.failed_attempts = 0
-        
-        # Limpiar y reiniciar
-        self.player_process = None
-        self.stream_video()
+        try:
+            # Esperar a que el proceso termine
+            exit_code = self.player_process.wait()
+            
+            # Procesar resultado
+            running_time = int(time.time() - start_time)
+            log("PLAYER", "info", f"Reproductor terminado con código {exit_code} después de {running_time}s")
+            
+            # Reintentar con espera progresiva si falló rápidamente
+            if running_time < 5:
+                self.failed_attempts += 1
+                wait_time = min(30, 5 * self.failed_attempts)
+                log("PLAYER", "info", f"Intento fallido #{self.failed_attempts}, esperando {wait_time}s antes de reintentar")
+                time.sleep(wait_time)
+            else:
+                self.failed_attempts = 0
+        except Exception as e:
+            log("PLAYER", "error", f"Error en monitoreo: {e}")
+        finally:
+            # Asegurar que el proceso esté completamente terminado
+            if self.player_process and self.player_process.poll() is None:
+                try:
+                    self.player_process.kill()
+                except:
+                    pass
+            
+            self.player_process = None
+            # Limpiar procesos residuales
+            self._kill_existing_players()
+            # Continuar con reproducción
+            self.stream_video()
 
     def run(self):
         """Bucle principal de ejecución"""
@@ -142,4 +192,6 @@ class StreamManager:
                 
             except Exception as e:
                 log("SISTEMA", "error", f"Error en bucle principal: {e}")
+                # Asegurar limpieza en caso de error
+                self._kill_existing_players()
                 time.sleep(10) 
