@@ -52,18 +52,11 @@ def main():
     # Configuración inicial
     show_default_image()
     
-    log("SISTEMA", "info", "Iniciando reproducción simplificada...")
-    
-    # Iniciar reproducción una sola vez (con URL fija en stream_manager)
-    stream_manager.stream_video()
-    
-    # Mantener el programa ejecutándose
-    log("SISTEMA", "info", "Reproducción iniciada, manteniendo proceso activo...")
+    log("SISTEMA", "info", "Iniciando bucle principal de streaming...")
     
     try:
-        # Bucle infinito para mantener el programa en ejecución
-        while True:
-            time.sleep(10)
+        # Iniciar el bucle principal de gestión
+        stream_manager.run()
     except KeyboardInterrupt:
         cleanup(None, None)
 

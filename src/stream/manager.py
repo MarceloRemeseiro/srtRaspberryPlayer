@@ -162,12 +162,20 @@ class StreamManager:
                 time.sleep(10)
                 return
         
-        # URL SRT exacta que el usuario confirmó que funciona con su comando
-        fixed_srt_url = "srt://core.streamingpro.es:6000/?mode=caller&transtype=live&streamid=7bb5ff4b-9470-4ff0-b5ff-16af476e8c1f,mode:request"
+        # Obtener la URL SRT del servidor
+        srt_url = get_srt_url()
+        if not srt_url:
+            log("STREAM", "warning", "No hay URL SRT disponible. Reintentando en 10 segundos...")
+            show_default_image()
+            time.sleep(10)
+            return
+        
+        # Guardar la última URL SRT para reutilizarla en caso de reconexión
+        self.last_srt_url = srt_url
         
         # Si FFmpeg no está corriendo, iniciarlo
         if not self.ffmpeg_process or (self.ffmpeg_process and self.ffmpeg_process.poll() is not None):
-            log("STREAM", "info", f"Iniciando reproducción con SRT URL probada")
+            log("STREAM", "info", f"Iniciando reproducción con SRT URL: {srt_url}")
             
             # Configurar HDMI como salida antes de iniciar FFmpeg
             try:
@@ -187,7 +195,7 @@ class StreamManager:
                 # Comando FFmpeg básico que ya está funcionando para video
                 ffmpeg_cmd = [
                     'ffmpeg',
-                    '-i', fixed_srt_url,
+                    '-i', srt_url,
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '/dev/fb0'
@@ -268,4 +276,35 @@ class StreamManager:
                 self.stream_video()
                 
         thread = threading.Thread(target=simple_monitor, daemon=True)
-        thread.start() 
+        thread.start()
+
+    def run(self):
+        """Bucle principal de ejecución"""
+        while True:
+            try:
+                # Iniciar la reproducción si no está en curso
+                if not self.ffmpeg_process or (self.ffmpeg_process and self.ffmpeg_process.poll() is not None):
+                    self.stream_video()
+                
+                # Verificar periódicamente el estado
+                current_time = time.time()
+                if current_time - self.last_config_check > CONFIG_CHECK_INTERVAL:
+                    self.last_config_check = current_time
+                    
+                    # Comprobar si hay cambios en la URL o estado
+                    log("SISTEMA", "info", "Verificando configuración...")
+                    
+                    # Si hay cambios, reiniciar la reproducción
+                    new_srt_url = get_srt_url()
+                    if new_srt_url != self.last_srt_url:
+                        log("SISTEMA", "info", "La URL SRT ha cambiado, reiniciando reproducción...")
+                        self.stop_ffmpeg()
+                        time.sleep(1)
+                        self.stream_video()
+                
+                # Dormir para no consumir CPU
+                time.sleep(5)
+                
+            except Exception as e:
+                log("SISTEMA", "error", f"Error en bucle principal: {e}")
+                time.sleep(10) 
