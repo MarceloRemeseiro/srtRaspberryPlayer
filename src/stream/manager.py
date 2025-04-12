@@ -3,6 +3,7 @@ import subprocess
 import os
 import signal
 import tempfile
+import threading
 from config.settings import CONFIG_CHECK_INTERVAL
 from display.screen import show_default_image
 from network.client import get_srt_url, log
@@ -12,13 +13,16 @@ class StreamManager:
         self.player_process = None
         self.last_config_check = time.time()
         self.last_srt_url = None
+        self.auto_restart_timer = None
         # URL de prueba - para diagnosticar problema de congelación
         self.test_url = "srt://core.streamingpro.es:6000/?mode=caller&transtype=live&streamid=3a6f96cd-6400-4ecf-bdcd-ed23b792ad85,mode:request"
         self.script_path = None
         # Limpieza inicial
         self._kill_existing_players()
         self._setup_audio()
-        log("SISTEMA", "info", "StreamManager inicializado - Modo shell independiente")
+        # Tiempo en segundos antes de reiniciar automáticamente (justo antes de la congelación)
+        self.auto_restart_seconds = 110  # Reiniciar cada 1m 50s
+        log("SISTEMA", "info", "StreamManager inicializado - Modo auto-reinicio preventivo")
 
     def _kill_existing_players(self):
         """Mata cualquier proceso de reproducción existente"""
@@ -33,6 +37,12 @@ class StreamManager:
                     os.remove(self.script_path)
                 except:
                     pass
+            
+            # Cancelar el temporizador si existe
+            if self.auto_restart_timer:
+                self.auto_restart_timer.cancel()
+                self.auto_restart_timer = None
+                
             time.sleep(1)
         except Exception as e:
             log("SISTEMA", "warning", f"Error matando procesos: {e}")
@@ -58,9 +68,10 @@ class StreamManager:
             log("AUDIO", "error", f"Error configurando audio: {e}")
 
     def stop_player(self):
+        log("PLAYER", "info", "Deteniendo reproductor")
+        
         if self.player_process:
             try:
-                log("PLAYER", "info", "Deteniendo reproductor")
                 self.player_process.terminate()
                 time.sleep(0.5)
                 if self.player_process.poll() is None:
@@ -71,8 +82,26 @@ class StreamManager:
             
             self.player_process = None
         
+        # Cancelar el temporizador si existe
+        if self.auto_restart_timer:
+            self.auto_restart_timer.cancel()
+            self.auto_restart_timer = None
+        
         # Matar todos los procesos MPV restantes
         self._kill_existing_players()
+
+    def _auto_restart(self):
+        """Realiza un reinicio automático preventivo"""
+        log("AUTO", "info", f"Ejecutando reinicio preventivo automático después de {self.auto_restart_seconds} segundos")
+        
+        # Detener el reproductor actual
+        self.stop_player()
+        
+        # Pequeña pausa para que los procesos terminen por completo
+        time.sleep(2)
+        
+        # Iniciar el reproductor de nuevo
+        self.stream_video()
 
     def start_via_shell_script(self, srt_url):
         """Inicia el reproductor a través de un script shell independiente"""
@@ -145,6 +174,12 @@ class StreamManager:
                 # Registrar tiempo de inicio
                 self.start_time = time.time()
                 log("PRUEBA", "info", f"Script iniciado a las {time.strftime('%H:%M:%S')}")
+                
+                # Programar reinicio automático preventivo
+                self.auto_restart_timer = threading.Timer(self.auto_restart_seconds, self._auto_restart)
+                self.auto_restart_timer.daemon = True
+                self.auto_restart_timer.start()
+                log("AUTO", "info", f"Programado reinicio automático en {self.auto_restart_seconds} segundos")
                 
             except Exception as e:
                 log("STREAM", "error", f"Error iniciando reproductor: {e}")
