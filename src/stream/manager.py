@@ -111,15 +111,6 @@ class StreamManager:
                     '--fullscreen',                                # Pantalla completa
                     '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',# Dispositivo de audio HDMI
                     '--volume=100',                                # Volumen al máximo
-                    # Parámetros para prevenir congelaciones
-                    '--cache=yes',                                 # Habilitar caché
-                    '--cache-secs=5',                              # Caché de 5 segundos (aumentado)
-                    '--network-timeout=5',                         # Timeout de red más corto
-                    '--framedrop=decoder+vo',                      # Saltar frames agresivamente
-                    '--video-sync=display-resample',               # Mejor sincronización de vídeo
-                    '--untimed',                                   # Desactivar temporización estricta
-                    '--keep-open=always',                          # Mantener abierto aunque haya errores
-                    '--no-correct-pts',                            # Desactivar corrección de timestamps
                 ]
                 
                 log("STREAM", "info", f"Iniciando MPV con parámetros avanzados anti-congelación")
