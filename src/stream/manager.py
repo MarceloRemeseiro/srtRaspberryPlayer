@@ -207,63 +207,65 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Configuración probada para SRT en Raspberry Pi
-                # Comando básico para video
-                ffmpeg_video_cmd = [
+                # Configuración optimizada para SRT basada en la documentación de FFmpeg
+                log("FFMPEG", "info", "Configurando parámetros optimizados para SRT")
+                
+                # Parámetros base para todos los modos (con o sin audio)
+                base_params = [
                     'ffmpeg',
-                    # Nivel de log y configuración básica
+                    # Nivel de logs para diagnóstico
                     '-loglevel', 'warning',
-                    # Parámetros de sincronización temporal
+                    # Incluir estadísticas
+                    '-stats',
+                    # Parámetros de buffer y rendimiento
+                    '-rtbufsize', '16M',    # Buffer más grande para estabilidad
+                    '-rw_timeout', '5000000',  # 5 segundos de timeout de lectura
+                    # Parámetros para sincronización
                     '-async', '1',           # Sincronización automática de audio
-                    '-vsync', '1',           # Mantener sincronización de video
+                    '-vsync', '1',           # Mantener sincronización de video constante
                     # Entrada SRT
                     '-i', srt_url,
-                    # Mapeado explícito de streams para asegurar orden correcto
-                    '-map', '0:v:0',         # Video stream
+                ]
+                
+                # Selección de output streams (mapeado explícito para control ordenado)
+                output_params = []
+                
+                # Configurar salida de video siempre
+                video_params = [
+                    # Seleccionar stream de video
+                    '-map', '0:v:0',
+                    # Configuración de salida de video
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '/dev/fb0'
                 ]
                 
-                # Comando básico para solo audio en un proceso separado
-                ffmpeg_audio_cmd = [
-                    'ffmpeg',
-                    '-loglevel', 'warning',
-                    # Sin retraso de inicio para el audio (-itsoffset -0.5 adelantaría el audio 0.5s)
-                    '-i', srt_url,
-                    '-vn',                   # Sin video
-                    '-af', 'aresample=async=1000',  # Resampling de audio para mejor sincronización
-                    '-f', 'alsa',
-                    '-ac', '2',
-                    'sysdefault:CARD=vc4hdmi0'
-                ]
-                
-                # Primero intentar la reproducción con todo integrado (más eficiente)
-                ffmpeg_cmd = ffmpeg_video_cmd.copy()
-                # Añadir audio usando ALSA si está disponible
+                # Configurar salida de audio si está disponible
                 if self.has_audio:
-                    # En lugar de extend, insertamos al final pero antes de la salida de video
                     audio_params = [
-                        '-map', '0:a:0',     # Audio stream
-                        '-af', 'aresample=async=1000',  # Resampling de audio para mejor sincronización
+                        # Seleccionar stream de audio
+                        '-map', '0:a:0',
+                        # Resampling adaptativo para mejor sincronización
+                        '-af', 'aresample=async=1000',
+                        # Configuración de salida de audio
                         '-f', 'alsa',
-                        '-ac', '2',
-                        'sysdefault:CARD=vc4hdmi0'
+                        '-ac', '2',     # Estéreo
+                        'default'       # Dispositivo estándar ALSA
                     ]
-                    
-                    # Insertar parámetros de audio justo después de la entrada pero antes de la salida de video
-                    ffmpeg_cmd = ffmpeg_cmd[:-5] + audio_params + ffmpeg_cmd[-5:]
                     log("FFMPEG", "info", "Audio habilitado con sincronización mejorada")
+                    
+                    # Construir comando completo con audio
+                    ffmpeg_cmd = base_params + video_params + audio_params
                 else:
-                    ffmpeg_cmd.append('-an')
+                    # Sin audio
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
+                    ffmpeg_cmd = base_params + ['-an'] + video_params
                 
-                log("FFMPEG", "debug", f"Comando integrado: {' '.join(ffmpeg_cmd)}")
+                # Registrar comando para diagnóstico
+                log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
                 
-                # Registrar el tiempo de inicio para estadísticas
+                # Iniciar el proceso FFmpeg
                 self.last_ffmpeg_start = time.time()
-                
-                # Intentar primero con todo integrado
                 self.ffmpeg_process = subprocess.Popen(
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
@@ -271,125 +273,178 @@ class StreamManager:
                     universal_newlines=True
                 )
                 
-                # Verificar inmediatamente si se inició bien
+                # Verificar si se inició correctamente
                 time.sleep(1)
-                if self.ffmpeg_process.poll() is not None:
-                    log("FFMPEG", "warning", "El modo integrado falló, intentando solo video...")
+                if self.ffmpeg_process.poll() is None:
+                    log("FFMPEG", "success", "Proceso FFmpeg iniciado correctamente")
                     
-                    # Si falló, intentar solo con video
+                    # Si el primer intento fue exitoso, iniciar monitoreo
+                    self._start_enhanced_monitor()
+                else:
+                    # Si falló, intentar con una configuración alternativa
+                    log("FFMPEG", "warning", "La configuración inicial falló, probando configuración alternativa...")
+                    
+                    # Opción alternativa: usar FFmpeg con menos opciones
+                    alt_cmd = [
+                        'ffmpeg',
+                        '-loglevel', 'warning',
+                        '-i', srt_url
+                    ]
+                    
+                    # Agregar salida de video
+                    alt_cmd.extend([
+                        '-pix_fmt', 'rgb565',
+                        '-f', 'fbdev',
+                        '/dev/fb0'
+                    ])
+                    
+                    # Agregar salida de audio si está disponible
+                    if self.has_audio:
+                        alt_cmd.extend([
+                            '-f', 'alsa',
+                            '-ac', '2',
+                            'default'
+                        ])
+                    else:
+                        alt_cmd.append('-an')
+                    
+                    log("FFMPEG", "info", f"Comando alternativo: {' '.join(alt_cmd)}")
+                    
+                    # Iniciar proceso alternativo
                     self.ffmpeg_process = subprocess.Popen(
-                        ffmpeg_video_cmd,
+                        alt_cmd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         universal_newlines=True
                     )
                     
-                    # Verificar si el video solo funciona
+                    # Verificar si se inició correctamente
                     time.sleep(1)
                     if self.ffmpeg_process.poll() is None:
-                        log("FFMPEG", "success", "Video iniciado correctamente")
-                        
-                        # Si tenemos audio, iniciarlo en un proceso separado
-                        if self.has_audio:
-                            try:
-                                # Iniciar un proceso separado para audio
-                                log("FFMPEG", "info", "Iniciando audio separado...")
-                                self.ffmpeg_audio_process = subprocess.Popen(
-                                    ffmpeg_audio_cmd,
-                                    stdout=subprocess.PIPE, 
-                                    stderr=subprocess.PIPE,
-                                    universal_newlines=True
-                                )
-                                log("FFMPEG", "success", "Audio iniciado en proceso separado")
-                            except Exception as e:
-                                log("FFMPEG", "error", f"Error iniciando audio: {e}")
-                                self.ffmpeg_audio_process = None
+                        log("FFMPEG", "success", "Proceso alternativo iniciado correctamente")
+                        self._start_enhanced_monitor()
                     else:
-                        log("FFMPEG", "error", "No se pudo iniciar la reproducción de video")
+                        # Capturar errores para diagnóstico
+                        log("FFMPEG", "error", "Ambos intentos fallaron")
+                        if self.ffmpeg_process:
+                            try:
+                                error_output = self.ffmpeg_process.stderr.read()
+                                log("FFMPEG", "error", f"Error FFmpeg: {error_output[:500]}...")
+                            except Exception as e:
+                                log("FFMPEG", "error", f"Error leyendo stderr: {e}")
                         self.ffmpeg_process = None
-                        return
-                else:
-                    log("FFMPEG", "success", "Proceso integrado iniciado correctamente")
-                
-                # Iniciar monitoreo
-                self._start_simple_monitor()
             except Exception as e:
-                log("FFMPEG", "error", f"Error iniciando proceso: {e}")
+                log("FFMPEG", "error", f"Error iniciando proceso FFmpeg: {e}")
                 self.ffmpeg_process = None
-
-    def _start_simple_monitor(self):
-        """Monitoreo simplificado de la salida"""
-        def simple_monitor():
+                
+    def _start_enhanced_monitor(self):
+        """Monitoreo mejorado para FFmpeg con detección de errores avanzada"""
+        def monitor():
+            error_count = 0
             frame_count = 0
             start_time = time.time()
             last_status_time = 0
-            error_count = 0  # Contador de errores consecutivos
-            max_errors = 10  # Máximo de errores antes de reintentar
+            last_frame_time = time.time()
             
             while self.ffmpeg_process and self.ffmpeg_process.poll() is None:
-                # Leer stderr (donde FFmpeg escribe sus logs)
-                err = self.ffmpeg_process.stderr.readline()
+                # Leer la salida de error de FFmpeg
+                try:
+                    err = self.ffmpeg_process.stderr.readline()
+                except Exception as e:
+                    log("FFMPEG", "warning", f"Error leyendo stderr: {e}")
+                    time.sleep(0.5)
+                    continue
+                
                 if err:
                     err = err.strip()
+                    current_time = time.time()
                     
-                    # Solo mostrar logs críticos para evitar saturación
-                    if 'error' in err.lower():
-                        if 'decode_slice_header' not in err and 'Invalid data found' not in err:
-                            # Errores importantes que no son de decodificación
-                            log("FFMPEG", "error", err)
-                        else:
-                            # Errores de decodificación, incrementar contador
-                            error_count += 1
-                            
-                            # Solo mostrar errores de decodificación ocasionalmente para no saturar logs
-                            if error_count % 20 == 0:
-                                log("FFMPEG", "warning", f"Errores de decodificación: {error_count}")
-                                
-                            # Si hay demasiados errores consecutivos, reiniciar
-                            if error_count >= max_errors and time.time() - start_time > 15:  # Al menos 15s de intento
-                                log("FFMPEG", "error", f"Demasiados errores de decodificación ({error_count}), reiniciando...")
-                                break
-                    
-                    # Mostrar info de frames periódicamente
+                    # Detectar frames recibidos
                     if 'frame=' in err:
                         frame_count += 1
-                        error_count = 0  # Resetear contador de errores si recibimos frames
-                        current_time = time.time()
-                        if current_time - last_status_time > 30:  # Solo cada 30 segundos
+                        last_frame_time = current_time
+                        # Resetear contador de errores
+                        error_count = 0
+                        
+                        # Mostrar estado periódicamente
+                        if current_time - last_status_time > 30:
                             log("FFMPEG", "info", f"Reproduciendo: {err}")
                             last_status_time = current_time
+                    
+                    # Detectar errores
+                    if 'error' in err.lower():
+                        error_count += 1
+                        
+                        # Filtrar errores conocidos para no saturar logs
+                        if 'decode_slice_header' in err or 'Invalid data found' in err:
+                            if error_count % 20 == 0:
+                                log("FFMPEG", "warning", f"Errores de decodificación: {error_count}")
+                        else:
+                            log("FFMPEG", "error", f"Error FFmpeg: {err}")
+                        
+                        # Reiniciar si hay demasiados errores
+                        if error_count > 20:
+                            log("FFMPEG", "error", f"Demasiados errores ({error_count}), reiniciando...")
+                            break
                 
-                # Dormir para reducir uso de CPU
+                # Verificar timeout - si no recibimos frames por mucho tiempo
+                if time.time() - last_frame_time > 10:
+                    error_count += 5
+                    log("FFMPEG", "warning", "No se han recibido frames en 10 segundos")
+                    last_frame_time = time.time()  # Resetear para evitar múltiples mensajes
+                    
+                    if error_count > 15:
+                        log("FFMPEG", "error", "Timeout de frames, reiniciando proceso...")
+                        break
+                
+                # Reducir uso de CPU
                 time.sleep(0.1)
             
-            # Verificar el código de salida
+            # Cuando termina el proceso
             exit_code = self.ffmpeg_process.poll() if self.ffmpeg_process else None
             running_time = int(time.time() - start_time)
-            log("FFMPEG", "info", f"Proceso terminado con código {exit_code} después de {running_time}s")
+            log("FFMPEG", "info", f"Proceso FFmpeg terminado con código {exit_code} después de {running_time}s")
+            
+            # Capturar cualquier error de salida
+            if exit_code != 0 and self.ffmpeg_process:
+                try:
+                    remaining_err = self.ffmpeg_process.stderr.read(1000)
+                    if remaining_err:
+                        log("FFMPEG", "error", f"Error de salida: {remaining_err.strip()}")
+                except:
+                    pass
             
             # Si el proceso duró poco tiempo, incrementar contador de fallos
             if running_time < 5:
                 self.failed_attempts += 1
                 log("FFMPEG", "warning", f"Intento fallido #{self.failed_attempts} (duración: {running_time}s)")
                 
-                # Espera progresiva para evitar ciclos de reinicio rápido
-                wait_time = min(30, 5 * self.failed_attempts)  # Máximo 30 segundos
+                # Incrementar tiempo de espera progresivamente
+                wait_time = min(30, 5 * self.failed_attempts)
                 log("FFMPEG", "info", f"Esperando {wait_time}s antes de reintentar...")
                 time.sleep(wait_time)
             else:
                 # Si funcionó por un tiempo razonable, resetear contador
                 self.failed_attempts = 0
             
-            # Cuando termine, limpiar y reintentar
+            # Limpiar y reiniciar
             if self.ffmpeg_process:
+                try:
+                    self.ffmpeg_process.terminate()
+                    time.sleep(0.5)
+                    if self.ffmpeg_process.poll() is None:
+                        self.ffmpeg_process.kill()
+                except:
+                    pass
                 self.ffmpeg_process = None
-                
-                # Reiniciar reproducción automáticamente
-                log("FFMPEG", "info", "Reintentando reproducción...")
-                self.stream_video()
-                
-        thread = threading.Thread(target=simple_monitor, daemon=True)
-        thread.start()
+            
+            # Reiniciar reproducción automáticamente
+            log("FFMPEG", "info", "Reintentando reproducción...")
+            self.stream_video()
+        
+        # Iniciar el monitoreo en un hilo separado
+        monitor_thread = threading.Thread(target=monitor, daemon=True)
+        monitor_thread.start()
 
     def run(self):
         """Bucle principal de ejecución"""
