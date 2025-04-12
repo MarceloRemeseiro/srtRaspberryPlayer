@@ -193,14 +193,14 @@ class StreamManager:
                     '/dev/fb0'
                 ]
                 
-                # Añadir audio como salida separada
+                # Añadir audio usando ALSA si está disponible
                 if self.has_audio:
                     ffmpeg_cmd.extend([
                         '-f', 'alsa',
                         '-ac', '2',       # 2 canales (estéreo)
-                        'hw:0,0'          # Dispositivo HDMI directo
+                        'default'         # Usar el dispositivo default de ALSA
                     ])
-                    log("FFMPEG", "info", "Audio habilitado con dispositivo HDMI hardware hw:0,0")
+                    log("FFMPEG", "info", "Audio habilitado con dispositivo ALSA default")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
@@ -218,7 +218,6 @@ class StreamManager:
                 
                 # Iniciar monitoreo
                 self._start_simple_monitor()
-                
             except Exception as e:
                 log("FFMPEG", "error", f"Error iniciando proceso: {e}")
                 self.ffmpeg_process = None
