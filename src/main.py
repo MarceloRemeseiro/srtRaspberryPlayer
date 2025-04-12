@@ -23,31 +23,20 @@ def main():
     # Configuración inicial
     show_default_image()
     
-    # Registro inicial
-    log("SISTEMA", "info", "Iniciando proceso de registro...")
-    register_with_proxy()
+    log("SISTEMA", "info", "Iniciando reproducción simplificada...")
     
-    # Obtener servidor asignado
-    server_url = get_server_url(force_check=True)
-    if server_url:
-        log("SISTEMA", "success", f"Servidor asignado: {server_url}")
-    else:
-        log("SISTEMA", "info", "Sin servidor asignado. Esperando asignación...")
+    # Iniciar reproducción una sola vez (con URL fija en stream_manager)
+    stream_manager.stream_video()
     
-    # Registrar en servidor de streaming si está disponible
-    register_device()
+    # Mantener el programa ejecutándose
+    log("SISTEMA", "info", "Reproducción iniciada, manteniendo proceso activo...")
     
-    log("SISTEMA", "info", "Iniciando bucle principal...")
-    log("SISTEMA", "info", "=== Dispositivo listo ===")
-    
-    while True:
-        try:
-            # Gestionar reproducción (se ejecuta en cada iteración)
-            stream_manager.stream_video()
-            
-        except Exception as e:
-            log("SISTEMA", "error", f"Error en bucle principal: {e}")
-        time.sleep(1)
+    try:
+        # Bucle infinito para mantener el programa en ejecución
+        while True:
+            time.sleep(10)
+    except KeyboardInterrupt:
+        cleanup(None, None)
 
 if __name__ == '__main__':
     main() 
