@@ -40,6 +40,19 @@ class StreamManager:
                 if not os.path.exists('/dev/snd'):
                     log("AUDIO", "warning", "Aún no se encuentra /dev/snd")
                     return False
+            
+            # Intentar configurar salida HDMI
+            try:
+                # Configurar audio para HDMI (3 = HDMI, 2 = HDMI1, 1 = Analógico)
+                log("AUDIO", "info", "Configurando salida de audio HDMI...")
+                subprocess.run(['amixer', 'cset', 'numid=3', '2'], check=False, 
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                
+                # Establecer volumen al máximo
+                subprocess.run(['amixer', 'set', 'Master', '100%'], check=False,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            except Exception as e:
+                log("AUDIO", "warning", f"Error configurando audio HDMI: {e}")
                 
             # Intentar obtener dispositivos de audio
             result = subprocess.run(['aplay', '-l'], 
@@ -53,6 +66,12 @@ class StreamManager:
                 
             # Si llegamos aquí, hay dispositivos de audio
             log("AUDIO", "info", f"Dispositivos de audio encontrados: {result.stdout.strip()}")
+            
+            # Probar dispositivos disponibles
+            devices = ['default', 'hw:0,0', 'hw:0,1', 'hw:CARD=b835,DEV=0', 'plughw:0,0']
+            for device in devices:
+                log("AUDIO", "info", f"Verificando dispositivo: {device}")
+            
             return True
             
         except Exception as e:
@@ -176,21 +195,40 @@ class StreamManager:
             log("STREAM", "info", f"Iniciando reproducción con URL simplificada: {fixed_srt_url}")
             
             try:
-                # Enfoque ultra minimalista - solo lo esencial
+                # Configuración optimizada para estabilidad
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-loglevel', 'debug',          # Log detallado para diagnóstico
                     '-protocol_whitelist', 'file,udp,rtp,srt',  # Permitir protocolo SRT
-                    '-fflags', '+nobuffer+flush_packets',  # No almacenar en buffer
-                    '-flags', 'low_delay',         # Minimizar latencia
-                    '-strict', 'experimental',     # Permitir opciones experimentales
-                    '-srt_streamid', '7bb5ff4b-9470-4ff0-b5ff-16af476e8c1f', # Forzar streamid
+                    # Aumentar buffer para mayor estabilidad
+                    '-buffer_size', '16384k',      # Buffer grande
+                    '-fflags', '+genpts+ignidx',   # Generar timestamps
+                    # Añadir parámetros específicos para SRT
+                    '-srt_maxbw', '8000000',       # Ancho de banda máximo 8Mbps
+                    '-srt_latency', '2000',        # Mayor latencia para estabilidad
                     '-i', fixed_srt_url,
+                    # Evitar filtros innecesarios para reducir carga de CPU
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
-                    '-y', '/dev/fb0',
-                    '-an'                          # Sin audio
+                    '-framedrop',                  # Permitir descartar frames para mantener sincronización
+                    '-y', '/dev/fb0'
                 ]
+                
+                # Añadir salida de audio si está disponible
+                if self.has_audio:
+                    log("FFMPEG", "info", "Añadiendo salida de audio...")
+                    ffmpeg_cmd.extend([
+                        '-f', 'alsa',
+                        '-ac', '2',                # 2 canales
+                        '-ar', '44100',            # Frecuencia de muestreo
+                        # Reducir tamaño del buffer para minimizar retardo
+                        '-alsa_buffer_size', '1024',
+                        'default'                  # Dispositivo predeterminado
+                    ])
+                else:
+                    # Desactivar audio si no hay dispositivo
+                    ffmpeg_cmd.append('-an')
+                    log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
                 
                 log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
                 
@@ -216,6 +254,7 @@ class StreamManager:
             frame_count = 0
             start_time = time.time()
             last_status_time = 0
+            min_stable_time = 30  # Considerar estable si funciona más de 30 segundos
             
             # Recolectar todos los errores para diagnóstico
             all_errors = []
@@ -238,8 +277,8 @@ class StreamManager:
                         got_initial_output = True
                         log("FFMPEG", "info", "Iniciada captura de salida")
                     
-                    # Registrar errores para diagnóstico
-                    if 'error' in err.lower():
+                    # Registrar errores para diagnóstico - excluir errores comunes de decode_slice_header
+                    if 'error' in err.lower() and 'decode_slice_header' not in err:
                         all_errors.append(err)
                         log("FFMPEG", "error", err)
                     
@@ -269,24 +308,31 @@ class StreamManager:
                 exit_code = self.ffmpeg_process.poll() or 0
                 log("FFMPEG", "info", f"Proceso terminado con código {exit_code} después de {int(running_time)}s y {frame_count} frames")
                 
-                # Mostrar errores capturados
+                # Mostrar errores capturados (solo los más relevantes)
                 if all_errors:
                     log("FFMPEG", "error", f"Se capturaron {len(all_errors)} errores, los últimos 3:")
                     for err in all_errors[-3:]:
                         log("FFMPEG", "error", f" - {err}")
                 
-                # Incrementar contador de intentos fallidos si no se reprodujo ningún frame
-                if frame_count == 0:
+                # Incrementar contador de intentos fallidos solo si falló demasiado pronto
+                if frame_count == 0 or running_time < min_stable_time:
                     self.failed_attempts += 1
-                    log("FFMPEG", "warning", f"Intento fallido #{self.failed_attempts} - No se reprodujo ningún frame")
+                    log("FFMPEG", "warning", f"Intento fallido #{self.failed_attempts} - Duración insuficiente ({int(running_time)}s)")
                 else:
-                    # Si reprodujo frames, reiniciar contador
+                    # Si reprodujo frames durante un tiempo razonable, reiniciar contador
                     self.failed_attempts = 0
+                    log("FFMPEG", "info", f"Reproducción estable durante {int(running_time)}s con {frame_count} frames")
                 
                 self.ffmpeg_process = None
                 
-                # Esperar 2 segundos antes de reiniciar
-                time.sleep(2)
+                # Esperar más tiempo antes de reiniciar si ha funcionado bien
+                if running_time >= min_stable_time:
+                    delay = 5
+                    log("FFMPEG", "info", f"Esperando {delay}s antes de reiniciar...")
+                    time.sleep(delay)
+                else:
+                    # Esperar poco si falló rápido
+                    time.sleep(2)
                 
                 # Reiniciar reproducción automáticamente
                 self.stream_video()
