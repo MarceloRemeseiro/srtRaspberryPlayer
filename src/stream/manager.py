@@ -216,7 +216,7 @@ class StreamManager:
                         # Audio
                         '-f', 'alsa',
                         '-ac', '2',
-                        'default'
+                        'sysdefault:CARD=vc4hdmi0'
                     ])
                 
                 log("FFMPEG", "info", f"Comando: {' '.join(ffmpeg_cmd)}")
