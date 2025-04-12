@@ -72,26 +72,36 @@ class StreamManager:
                     'cvlc',  # VLC sin interfaz
                     '--no-video-title-show',
                     '--fullscreen',
+                    '--quiet',
                     '--no-loop',
                     '--no-repeat',
                     '--play-and-exit',
+                    # Configuración de audio mejorada
                     '--aout=alsa',
-                    '--alsa-audio-device=hw:CARD=vc4hdmi0,DEV=0',
+                    '--alsa-audio-device=default',  # Usar el dispositivo de audio por defecto
+                    '--gain=1.0',  # Ganancia de audio normal
+                    '--audio-filter=compressor',  # Mejor procesamiento de audio
+                    # Configuración de video
+                    '--vout=mmal_vout',  # Salida de video optimizada para Raspberry Pi
                     '--video-on-top',
-                    '--audio-desync=0',  # Sincronización de audio
+                    # Configuración de red y caché
+                    '--live-caching=300',  # Valor más bajo para streaming en vivo
                     '--network-caching=1000',  # Búfer de red (ms)
-                    '--file-caching=1000',
-                    '--sout-mux-caching=1000',
-                    srt_url
+                    '--clock-jitter=0',  # Reduce jitter en la sincronización
+                    '--clock-synchro=0',  # Desactiva la sincronización de reloj para SRT
+                    '--sout-mux-caching=300',
+                    # Protocolo SRT con comillas para evitar problemas de shell
+                    f'"{srt_url}"'
                 ]
                 
-                log("STREAM", "info", f"Iniciando VLC: {' '.join(vlc_cmd)}")
+                log("STREAM", "info", f"Iniciando VLC con configuración mejorada")
                 
-                # Iniciar VLC
+                # Iniciar VLC con shell=True para manejar la URL SRT correctamente
                 self.player_process = subprocess.Popen(
-                    vlc_cmd,
+                    ' '.join(vlc_cmd),
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
+                    stderr=subprocess.PIPE,
+                    shell=True
                 )
                 
                 # Monitoreo en hilo separado
