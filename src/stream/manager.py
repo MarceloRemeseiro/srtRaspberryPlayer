@@ -213,9 +213,13 @@ class StreamManager:
                     'ffmpeg',
                     # Nivel de log y configuración básica
                     '-loglevel', 'warning',
-                    # Configuración de entrada que funciona bien con SRT
+                    # Parámetros de sincronización temporal
+                    '-async', '1',           # Sincronización automática de audio
+                    '-vsync', '1',           # Mantener sincronización de video
+                    # Entrada SRT
                     '-i', srt_url,
-                    # Formato de salida para framebuffer
+                    # Mapeado explícito de streams para asegurar orden correcto
+                    '-map', '0:v:0',         # Video stream
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '/dev/fb0'
@@ -225,8 +229,10 @@ class StreamManager:
                 ffmpeg_audio_cmd = [
                     'ffmpeg',
                     '-loglevel', 'warning',
+                    # Sin retraso de inicio para el audio (-itsoffset -0.5 adelantaría el audio 0.5s)
                     '-i', srt_url,
-                    '-vn',  # Sin video
+                    '-vn',                   # Sin video
+                    '-af', 'aresample=async=1000',  # Resampling de audio para mejor sincronización
                     '-f', 'alsa',
                     '-ac', '2',
                     'sysdefault:CARD=vc4hdmi0'
@@ -236,12 +242,18 @@ class StreamManager:
                 ffmpeg_cmd = ffmpeg_video_cmd.copy()
                 # Añadir audio usando ALSA si está disponible
                 if self.has_audio:
-                    ffmpeg_cmd.extend([
+                    # En lugar de extend, insertamos al final pero antes de la salida de video
+                    audio_params = [
+                        '-map', '0:a:0',     # Audio stream
+                        '-af', 'aresample=async=1000',  # Resampling de audio para mejor sincronización
                         '-f', 'alsa',
                         '-ac', '2',
                         'sysdefault:CARD=vc4hdmi0'
-                    ])
-                    log("FFMPEG", "info", "Audio habilitado en modo integrado")
+                    ]
+                    
+                    # Insertar parámetros de audio justo después de la entrada pero antes de la salida de video
+                    ffmpeg_cmd = ffmpeg_cmd[:-5] + audio_params + ffmpeg_cmd[-5:]
+                    log("FFMPEG", "info", "Audio habilitado con sincronización mejorada")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
