@@ -104,27 +104,28 @@ class StreamManager:
                 # Reconfigurar HDMI como salida 
                 self._setup_audio()
                 
-                # Opciones para MPV que funcionan correctamente con parámetros adicionales para estabilidad
+                # Opciones simplificadas para MPV que funcionan bien en la práctica
                 mpv_cmd = [
-                    'mpv',                      # Reproductor MPV
-                    srt_url,                    # URL SRT directa
-                    '--fullscreen',             # Pantalla completa
-                    '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',  # Dispositivo de audio específico
-                    '--volume=100',             # Volumen al máximo
-                    # Parámetros para evitar congelación
-                    '--keep-open=always',       # Mantener abierto incluso si hay errores
-                    '--network-timeout=10',     # Timeout de red en segundos
-                    '--untimed',                # Desactivar temporización estricta
-                    '--no-cache-pause',         # No pausar cuando el búfer está vacío
-                    '--demuxer-lavf-probe-info=nostreams', # Mejor detección de streams
-                    '--hr-seek=no',             # Búsqueda menos precisa pero más rápida
-                    '--vd-lavc-threads=4',      # Hilos para decodificación
-                    '--cache=yes',              # Activar caché
-                    '--cache-secs=10',          # Caché de 10 segundos
-                    '--stream-lavf-o=reconnect=1:reconnect_streamed=1:reconnect_delay_max=5' # Reconexión automática
+                    'mpv',                                         # Reproductor MPV
+                    srt_url,                                       # URL SRT directa
+                    '--fullscreen',                                # Pantalla completa
+                    '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',# Dispositivo de audio HDMI
+                    '--volume=100',                                # Volumen al máximo
+                    # Parámetros clave para tolerancia a errores
+                    '--hr-seek=no',                                # Búsqueda menos precisa pero más estable
+                    '--vd-lavc-skiploopfilter=all',                # Saltar filtros de bucle para mejorar rendimiento
+                    '--vd-lavc-skip-idct=all',                     # Saltar IDCT para mejorar rendimiento
+                    '--vd-lavc-framedrop=decoder',                 # Descartar cuadros en el decodificador si es necesario
+                    '--error-diffusion=100',                       # Difusión de error para suavizar errores visuales
+                    '--opengl-swapinterval=0',                     # Desactivar vsync para mejor rendimiento
+                    '--hwdec=auto',                                # Usar decodificación por hardware si está disponible
+                    '--no-correct-pts',                            # No corregir timestamps, mejor para streams
+                    '--video-sync=audio',                          # Sincronizar video con audio
+                    '--cache=yes',                                 # Usar caché
+                    '--cache-secs=5'                               # Caché de 5 segundos (valor más bajo para menos latencia)
                 ]
                 
-                log("STREAM", "info", f"Iniciando MPV con configuración mejorada para estabilidad")
+                log("STREAM", "info", f"Iniciando MPV con configuración optimizada para estabilidad")
                 
                 # Iniciar MPV
                 self.player_process = subprocess.Popen(
@@ -186,36 +187,47 @@ class StreamManager:
             self.stream_video()
 
     def _monitor_activity(self):
-        """Monitor de actividad para detectar congelaciones"""
-        last_check = time.time()
+        """Monitor de actividad para detectar congelaciones graves y persistentes"""
+        # Inicializar tiempo de inicio
+        start_time = time.time()
+        self.last_output_time = time.time()
+        
+        # Esperar 5 minutos antes de empezar a monitorear para dar tiempo a la reproducción
+        time.sleep(300)
+        
+        # Contar reinicios para evitar bucles
+        reinicios_totales = 0
+        
         while self.player_process and self.player_process.poll() is None:
             try:
-                # Verificar si el proceso sigue respondiendo cada 30 segundos
+                # Verificar si el proceso sigue respondiendo cada 60 segundos
+                time.sleep(60)
+                
+                if self.player_process and self.player_process.poll() is None:
+                    # Proceso activo, actualizar tiempo de actividad
+                    log("MONITOR", "info", "Reproducción activa, tiempo total: " + 
+                        f"{int((time.time() - start_time) / 60)} minutos")
+                    # Actualizar timestamp de salida para indicar que estamos verificando actividad
+                    self.last_output_time = time.time()
+                
+                # Solo reiniciar si han pasado más de 10 minutos desde el último reinicio
                 current_time = time.time()
-                if current_time - last_check > 30:
-                    last_check = current_time
-                    log("MONITOR", "info", "Verificando estado de reproducción...")
+                if reinicios_totales < 3 and current_time - self.last_output_time > 600:
+                    log("MONITOR", "warning", "Posible congelación grave detectada. Reiniciando reproductor...")
+                    # Reiniciar el reproductor
+                    self.stop_player()
+                    time.sleep(3)
+                    self.stream_video()
+                    reinicios_totales += 1
+                    self.last_output_time = time.time()  # Actualizar timestamp después del reinicio
+                    # Esperar 5 minutos antes de continuar monitoreando
+                    time.sleep(300)
                     
-                    # Intentar obtener información del proceso
-                    # Si el proceso está congelado, esto podría fallar
-                    if self.player_process.poll() is None:
-                        # Proceso aún activo, verificar si hace mucho que no hay salida
-                        # Si el proceso está congelado, podríamos reiniciarlo
-                        if hasattr(self, 'last_output_time') and current_time - self.last_output_time > 60:
-                            log("MONITOR", "warning", "Posible congelación detectada. Reiniciando reproductor...")
-                            # Reiniciar el reproductor
-                            self.stop_player()
-                            time.sleep(1)
-                            self.stream_video()
-                            return
-                        else:
-                            log("MONITOR", "info", "Reproducción parece activa")
-                            self.last_output_time = current_time
             except Exception as e:
                 log("MONITOR", "error", f"Error en monitoreo de actividad: {e}")
             
             # Dormir un poco antes del siguiente chequeo
-            time.sleep(5)
+            time.sleep(10)
 
     def run(self):
         """Bucle principal de ejecución"""
