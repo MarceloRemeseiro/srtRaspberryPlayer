@@ -250,7 +250,7 @@ class StreamManager:
                         # Configuración de salida de audio
                         '-f', 'alsa',
                         '-ac', '2',     # Estéreo
-                        'default'       # Dispositivo estándar ALSA
+                        'sysdefault:CARD=vc4hdmi0'       # Dispositivo estándar ALSA
                     ]
                     log("FFMPEG", "info", "Audio habilitado con sincronización mejorada")
                     
