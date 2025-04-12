@@ -15,6 +15,7 @@ class StreamManager:
         self.failed_attempts = 0    # Contador de intentos fallidos consecutivos
         self.has_audio = self._check_audio_device()
         self.has_framebuffer = self._check_framebuffer()
+        self.use_hw_decoder = False  # Inicialmente usar decodificador por software
         
         # Probar la capacidad de video al inicio
         if self.has_framebuffer:
@@ -168,13 +169,34 @@ class StreamManager:
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-loglevel', 'info',
+                    '-protocol_whitelist', 'file,udp,rtp,srt',  # Permitir protocolo SRT
+                    '-buffer_size', '8192k',     # Aumentar tamaño del búfer
+                ]
+                
+                # Si estamos en el tercer intento, probar con decodificador hardware
+                if self.failed_attempts >= 2 and not self.use_hw_decoder:
+                    log("FFMPEG", "info", "Probando con decodificador hardware h264_v4l2m2m")
+                    self.use_hw_decoder = True
+                    ffmpeg_cmd.extend([
+                        '-c:v', 'h264_v4l2m2m',  # Usar decodificador hardware
+                    ])
+                
+                ffmpeg_cmd.extend([
                     '-i', self.last_srt_url,
+                    '-strict', 'experimental',  # Permitir decodificadores experimentales
                     '-vf', 'scale=1280:720',
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '-framerate', '25',
+                    '-timeout', '5000000',      # Establecer timeout
+                    '-max_delay', '500000',     # Reducir el retardo máximo
+                    '-fflags', '+genpts+discardcorrupt',  # Generar PTS y descartar frames corruptos
+                    '-analyzeduration', '10000000',  # Aumentar tiempo de análisis
+                    '-probesize', '5000000',    # Aumentar buffer de sondeo
+                    '-stats',                   # Mostrar estadísticas
+                    '-re',                      # Leer a velocidad nativa
                     '-y', '/dev/fb0'
-                ]
+                ])
                 
                 # Añadir audio solo si está disponible
                 if not self.has_audio:
@@ -221,31 +243,57 @@ class StreamManager:
         """Monitorea la salida de FFmpeg en tiempo real"""
         def monitor():
             start_time = time.time()
+            error_count = 0
+            last_error_time = 0
             
             while self.ffmpeg_process and self.ffmpeg_process.poll() is None:
                 # Leer stderr (donde FFmpeg escribe sus logs)
                 err = self.ffmpeg_process.stderr.readline()
                 if err:
                     err = err.strip()
-                    if 'Connection refused' in err or 'Connection timed out' in err:
+                    
+                    # Registrar errores específicos de H264
+                    if 'non-existing PPS' in err or 'decode_slice_header error' in err:
+                        current_time = time.time()
+                        
+                        # Solo contar como error si ha pasado más de 2 segundos desde el último
+                        if current_time - last_error_time > 2:
+                            error_count += 1
+                            last_error_time = current_time
+                            
+                            # Solo reportar cada 20 errores para no saturar los logs
+                            if error_count % 20 == 0:
+                                log("FFMPEG", "warning", f"Errores de decodificación H264: {error_count} acumulados")
+                        
+                    elif 'Connection refused' in err or 'Connection timed out' in err:
                         log("FFMPEG", "error", f"Error de conexión SRT: {err}")
                     elif 'Error' in err or 'error' in err:
-                        log("FFMPEG", "error", f"Error FFmpeg: {err}")
-                    elif 'Opening' in err or 'Stream mapping' in err or 'Video:' in err:
+                        if 'non-existing PPS' not in err and 'decode_slice_header error' not in err:
+                            log("FFMPEG", "error", f"Error FFmpeg: {err}")
+                    elif 'Opening' in err or 'Stream mapping' in err or 'Video:' in err or 'Audio:' in err:
                         log("FFMPEG", "info", err)
+                    elif 'frame=' in err:  # Línea de progreso
+                        # Solo mostrar cada 50 frames
+                        if not hasattr(monitor, 'frame_count'):
+                            monitor.frame_count = 0
+                        monitor.frame_count += 1
+                        if monitor.frame_count % 50 == 0:
+                            log("FFMPEG", "info", f"Progreso: {err}")
                     else:
                         log("FFMPEG", "debug", err)
 
                 # Verificar si FFmpeg sigue vivo
                 if self.ffmpeg_process.poll() is not None:
-                    # Si FFmpeg termina en menos de 3 segundos, incrementar contador de fallos
-                    if time.time() - start_time < 3:
+                    duration = time.time() - start_time
+                    
+                    # Si FFmpeg termina en menos de 5 segundos y tuvimos muchos errores, incrementar contador de fallos
+                    if duration < 5 and error_count > 20:
                         self.failed_attempts += 1
                         log("FFMPEG", "error", f"FFmpeg terminó demasiado rápido: {self.ffmpeg_process.returncode} (intento {self.failed_attempts}/3)")
                     else:
-                        # Si duró más de 3 segundos, reiniciar contador
+                        # Si duró más de 5 segundos o hubo pocos errores, reiniciar contador
                         self.failed_attempts = 0
-                        log("FFMPEG", "error", f"FFmpeg terminó con código: {self.ffmpeg_process.returncode}")
+                        log("FFMPEG", "error", f"FFmpeg terminó con código: {self.ffmpeg_process.returncode} (después de {int(duration)} segundos)")
                     break
 
         thread = threading.Thread(target=monitor, daemon=True)
