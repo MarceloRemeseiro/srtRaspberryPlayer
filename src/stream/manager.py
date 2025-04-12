@@ -1,34 +1,27 @@
 import time
 import subprocess
-import threading
 import os
 import signal
 from config.settings import CONFIG_CHECK_INTERVAL
 from display.screen import show_default_image
-from network.client import register_device, get_srt_url, log
+from network.client import get_srt_url, log
 
 class StreamManager:
     def __init__(self):
         self.player_process = None
         self.last_config_check = time.time()
         self.last_srt_url = None
-        self.failed_attempts = 0
-        self.last_output_time = time.time()  # Para monitoreo de congelación
-        # Asegurar limpieza al iniciar
+        # Limpieza inicial
         self._kill_existing_players()
         self._setup_audio()
-        log("SISTEMA", "info", "StreamManager inicializado - Usando MPV")
+        log("SISTEMA", "info", "StreamManager inicializado - Modo minimalista")
 
     def _kill_existing_players(self):
         """Mata cualquier proceso de reproducción existente"""
         try:
-            log("SISTEMA", "info", "Matando procesos existentes...")
-            # Matar cualquier proceso mpv
             subprocess.run(['pkill', '-9', 'mpv'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-            # Matar cualquier proceso vlc/cvlc
             subprocess.run(['pkill', '-9', 'vlc'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             subprocess.run(['pkill', '-9', 'cvlc'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-            # Matar cualquier proceso ffmpeg
             subprocess.run(['pkill', '-9', 'ffmpeg'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             time.sleep(1)
         except Exception as e:
@@ -38,165 +31,78 @@ class StreamManager:
         """Configura el audio HDMI"""
         try:
             log("AUDIO", "info", "Configurando audio HDMI...")
-            
-            # Configurar HDMI como salida principal
             subprocess.run(['amixer', 'cset', 'numid=3', '2'], 
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            log("AUDIO", "info", "HDMI configurado como salida principal")
-            
-            # Establecer volumen al máximo
             subprocess.run(['amixer', 'set', 'Master', '100%'], 
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            log("AUDIO", "info", "Volumen configurado al máximo")
-            
+            log("AUDIO", "info", "Audio HDMI configurado")
         except Exception as e:
             log("AUDIO", "error", f"Error configurando audio: {e}")
 
     def stop_player(self):
         if self.player_process:
-            log("PLAYER", "info", "Deteniendo reproductor")
             try:
-                # Enviar SIGTERM
                 self.player_process.terminate()
-                # Esperar a que termine
-                for i in range(10):  # Esperar hasta 1 segundo
-                    if self.player_process.poll() is not None:
-                        break
-                    time.sleep(0.1)
-                
-                # Si sigue vivo después de 1 segundo, enviar SIGKILL
+                time.sleep(0.5)
                 if self.player_process.poll() is None:
-                    log("PLAYER", "warning", "El proceso no respondió a SIGTERM, enviando SIGKILL")
                     self.player_process.kill()
-                    self.player_process.wait(timeout=1)
             except Exception as e:
                 log("PLAYER", "error", f"Error deteniendo reproductor: {e}")
-                try:
-                    # Matar al proceso con SIGKILL
-                    os.kill(self.player_process.pid, signal.SIGKILL)
-                except:
-                    pass
             
             self.player_process = None
-            # Asegurar que todos los procesos relacionados estén muertos
             self._kill_existing_players()
 
     def stream_video(self):
         # Obtener la URL SRT del servidor
         srt_url = get_srt_url()
         if not srt_url:
-            log("STREAM", "warning", "No hay URL SRT disponible. Reintentando en 10 segundos...")
+            log("STREAM", "warning", "No hay URL SRT disponible. Reintentando...")
             show_default_image()
-            time.sleep(10)
             return
         
-        # Guardar la última URL SRT para reutilizarla en caso de reconexión
+        # Guardar la última URL SRT
         self.last_srt_url = srt_url
         
         # Si el reproductor no está corriendo, iniciarlo
-        if not self.player_process or (self.player_process and self.player_process.poll() is not None):
+        if not self.player_process or self.player_process.poll() is not None:
             log("STREAM", "info", f"Iniciando reproducción con SRT URL: {srt_url}")
             
             try:
                 # Asegurar limpieza previa
                 self._kill_existing_players()
                 
-                # Reconfigurar HDMI como salida 
+                # Reconfigurar audio
                 self._setup_audio()
                 
-                # Opciones para MPV con parámetros avanzados para estabilidad
+                # Comando de MPV simplificado
                 mpv_cmd = [
-                    'mpv',                                         # Reproductor MPV
-                    srt_url,                                       # URL SRT directa
-                    '--fullscreen',                                # Pantalla completa
-                    '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',# Dispositivo de audio HDMI
-                    '--volume=100',                                # Volumen al máximo
-                    '--untimed',                                   # Desactiva temporización interna para mejor streaming
+                    'mpv',
+                    srt_url,
+                    '--fullscreen',
+                    '--audio-device=alsa/sysdefault:CARD=vc4hdmi0',
+                    '--volume=100',
+                    '--untimed',                  # Desactiva temporización interna para mejor streaming
                 ]
                 
-                log("STREAM", "info", f"Iniciando MPV con parámetros optimizados para estabilidad")
-                
-                # Iniciar MPV con un simple proceso
+                # Iniciar MPV sin monitores adicionales
                 self.player_process = subprocess.Popen(
                     mpv_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE
                 )
                 
-                # Simple thread para esperar que el proceso termine
-                threading.Thread(
-                    target=self._simple_monitor,
-                    daemon=True
-                ).start()
+                log("STREAM", "info", "Reproductor iniciado sin monitores adicionales")
                 
             except Exception as e:
                 log("STREAM", "error", f"Error iniciando reproducción: {e}")
                 self.player_process = None
-    
-    def _simple_monitor(self):
-        """Monitoreo básico para el proceso de reproducción"""
-        try:
-            # Esperar a que el proceso termine
-            exit_code = self.player_process.wait()
-            log("PLAYER", "info", f"Reproductor terminado con código {exit_code}")
-            self.player_process = None
-            
-            # Simplemente intentar reiniciar después de un breve retraso
-            time.sleep(2)
-            self.stream_video()
-        except Exception as e:
-            log("PLAYER", "error", f"Error en monitoreo simple: {e}")
-            self.player_process = None
-
-    def _monitor_activity(self):
-        """Monitor de actividad para detectar congelaciones graves y persistentes"""
-        # Inicializar tiempo de inicio
-        start_time = time.time()
-        self.last_output_time = time.time()
-        
-        # Esperar 5 minutos antes de empezar a monitorear para dar tiempo a la reproducción
-        time.sleep(300)
-        
-        # Contar reinicios para evitar bucles
-        reinicios_totales = 0
-        
-        while self.player_process and self.player_process.poll() is None:
-            try:
-                # Verificar si el proceso sigue respondiendo cada 60 segundos
-                time.sleep(60)
-                
-                if self.player_process and self.player_process.poll() is None:
-                    # Proceso activo, actualizar tiempo de actividad
-                    log("MONITOR", "info", "Reproducción activa, tiempo total: " + 
-                        f"{int((time.time() - start_time) / 60)} minutos")
-                    # Actualizar timestamp de salida para indicar que estamos verificando actividad
-                    self.last_output_time = time.time()
-                
-                # Solo reiniciar si han pasado más de 10 minutos desde el último reinicio
-                current_time = time.time()
-                if reinicios_totales < 3 and current_time - self.last_output_time > 600:
-                    log("MONITOR", "warning", "Posible congelación grave detectada. Reiniciando reproductor...")
-                    # Reiniciar el reproductor
-                    self.stop_player()
-                    time.sleep(3)
-                    self.stream_video()
-                    reinicios_totales += 1
-                    self.last_output_time = time.time()  # Actualizar timestamp después del reinicio
-                    # Esperar 5 minutos antes de continuar monitoreando
-                    time.sleep(300)
-                    
-            except Exception as e:
-                log("MONITOR", "error", f"Error en monitoreo de actividad: {e}")
-            
-            # Dormir un poco antes del siguiente chequeo
-            time.sleep(10)
 
     def run(self):
         """Bucle principal de ejecución"""
         while True:
             try:
                 # Iniciar la reproducción si no está en curso
-                if not self.player_process or (self.player_process and self.player_process.poll() is not None):
+                if not self.player_process or self.player_process.poll() is not None:
                     self.stream_video()
                 
                 # Verificar periódicamente cambios en la URL
@@ -216,6 +122,5 @@ class StreamManager:
                 
             except Exception as e:
                 log("SISTEMA", "error", f"Error en bucle principal: {e}")
-                # Asegurar limpieza en caso de error
                 self._kill_existing_players()
                 time.sleep(5) 
