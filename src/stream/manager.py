@@ -192,19 +192,20 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando FFmpeg optimizado para baja latencia y estabilidad de frames
+                # Comando FFmpeg simplificado para evitar problemas de decodificación
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-loglevel', 'warning',
-                    '-fflags', 'nobuffer+discardcorrupt',  # No buffering y descartar frames corruptos
-                    '-flags', 'low_delay',                # Priorizar baja latencia
-                    '-probesize', '32',                   # Reducir tamaño de sondeo
-                    '-analyzeduration', '0',              # No analizar duración
-                    '-re',                                # Leer a velocidad nativa
+                    # Parámetros para reducir latencia pero sin opciones problemáticas
+                    '-fflags', 'nobuffer',
+                    '-flags', 'low_delay',
+                    '-probesize', '32',
+                    '-analyzeduration', '0',
+                    # Input principal
                     '-i', srt_url,
-                    '-threads', '2',                      # Limitar threads para evitar sobrecarga
-                    '-preset', 'ultrafast',               # Codificación más rápida
-                    '-tune', 'zerolatency',               # Optimizar para latencia cero
+                    # Configuración de procesamiento
+                    '-threads', '2',
+                    # Configuración de salida de video
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '/dev/fb0'
@@ -217,12 +218,15 @@ class StreamManager:
                         '-ac', '2',
                         'sysdefault:CARD=vc4hdmi0'
                     ])
-                    log("FFMPEG", "info", "Audio habilitado con latencia reducida")
+                    log("FFMPEG", "info", "Audio habilitado")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
                 
                 log("FFMPEG", "debug", f"Comando: {' '.join(ffmpeg_cmd)}")
+                
+                # Registrar el tiempo de inicio para estadísticas
+                self.last_ffmpeg_start = time.time()
                 
                 self.ffmpeg_process = subprocess.Popen(
                     ffmpeg_cmd,
@@ -245,6 +249,8 @@ class StreamManager:
             frame_count = 0
             start_time = time.time()
             last_status_time = 0
+            error_count = 0  # Contador de errores consecutivos
+            max_errors = 10  # Máximo de errores antes de reintentar
             
             while self.ffmpeg_process and self.ffmpeg_process.poll() is None:
                 # Leer stderr (donde FFmpeg escribe sus logs)
@@ -253,12 +259,27 @@ class StreamManager:
                     err = err.strip()
                     
                     # Solo mostrar logs críticos para evitar saturación
-                    if 'error' in err.lower() and 'decode_slice_header' not in err:
-                        log("FFMPEG", "error", err)
+                    if 'error' in err.lower():
+                        if 'decode_slice_header' not in err and 'Invalid data found' not in err:
+                            # Errores importantes que no son de decodificación
+                            log("FFMPEG", "error", err)
+                        else:
+                            # Errores de decodificación, incrementar contador
+                            error_count += 1
+                            
+                            # Solo mostrar errores de decodificación ocasionalmente para no saturar logs
+                            if error_count % 20 == 0:
+                                log("FFMPEG", "warning", f"Errores de decodificación: {error_count}")
+                                
+                            # Si hay demasiados errores consecutivos, reiniciar
+                            if error_count >= max_errors and time.time() - start_time > 15:  # Al menos 15s de intento
+                                log("FFMPEG", "error", f"Demasiados errores de decodificación ({error_count}), reiniciando...")
+                                break
                     
                     # Mostrar info de frames periódicamente
                     if 'frame=' in err:
                         frame_count += 1
+                        error_count = 0  # Resetear contador de errores si recibimos frames
                         current_time = time.time()
                         if current_time - last_status_time > 30:  # Solo cada 30 segundos
                             log("FFMPEG", "info", f"Reproduciendo: {err}")
@@ -272,13 +293,22 @@ class StreamManager:
             running_time = int(time.time() - start_time)
             log("FFMPEG", "info", f"Proceso terminado con código {exit_code} después de {running_time}s")
             
-            # Cuando termine, reiniciar con un retraso
-            if self.ffmpeg_process:
-                # Limpiar el proceso terminado
-                self.ffmpeg_process = None
+            # Si el proceso duró poco tiempo, incrementar contador de fallos
+            if running_time < 5:
+                self.failed_attempts += 1
+                log("FFMPEG", "warning", f"Intento fallido #{self.failed_attempts} (duración: {running_time}s)")
                 
-                # Esperar un tiempo fijo antes de reintentar
-                time.sleep(5)
+                # Espera progresiva para evitar ciclos de reinicio rápido
+                wait_time = min(30, 5 * self.failed_attempts)  # Máximo 30 segundos
+                log("FFMPEG", "info", f"Esperando {wait_time}s antes de reintentar...")
+                time.sleep(wait_time)
+            else:
+                # Si funcionó por un tiempo razonable, resetear contador
+                self.failed_attempts = 0
+            
+            # Cuando termine, limpiar y reintentar
+            if self.ffmpeg_process:
+                self.ffmpeg_process = None
                 
                 # Reiniciar reproducción automáticamente
                 log("FFMPEG", "info", "Reintentando reproducción...")
