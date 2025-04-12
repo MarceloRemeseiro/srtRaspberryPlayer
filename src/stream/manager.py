@@ -19,8 +19,20 @@ class StreamManager:
         try:
             # Comprobar si existe /dev/snd
             if not os.path.exists('/dev/snd'):
-                log("AUDIO", "warning", "No se encontró /dev/snd")
-                return False
+                log("AUDIO", "warning", "No se encontró /dev/snd, intentando cargar el módulo de sonido")
+                # Intentar cargar el módulo de sonido Raspberry Pi
+                try:
+                    subprocess.run(['modprobe', 'snd-bcm2835'], check=True)
+                    log("AUDIO", "info", "Módulo snd-bcm2835 cargado")
+                    # Dar tiempo a que se inicialice
+                    time.sleep(1)
+                except Exception as e:
+                    log("AUDIO", "error", f"Error cargando módulo de sonido: {e}")
+                
+                # Verificar de nuevo si existe /dev/snd después de cargar el módulo
+                if not os.path.exists('/dev/snd'):
+                    log("AUDIO", "warning", "Aún no se encuentra /dev/snd")
+                    return False
                 
             # Intentar obtener dispositivos de audio
             result = subprocess.run(['aplay', '-l'], 
@@ -33,7 +45,7 @@ class StreamManager:
                 return False
                 
             # Si llegamos aquí, hay dispositivos de audio
-            log("AUDIO", "info", "Dispositivos de audio encontrados")
+            log("AUDIO", "info", f"Dispositivos de audio encontrados: {result.stdout.strip()}")
             return True
             
         except Exception as e:
@@ -119,9 +131,9 @@ class StreamManager:
                         '-f', 'alsa',
                         '-ac', '2',
                         '-ar', '48000',
-                        'default'
+                        'hw:0,0'  # Usar directamente el hardware en lugar de 'default'
                     ])
-                    log("FFMPEG", "info", "Reproduciendo con audio")
+                    log("FFMPEG", "info", "Reproduciendo con audio (dispositivo hw:0,0)")
                 
                 self.ffmpeg_process = subprocess.Popen(
                     ffmpeg_cmd,

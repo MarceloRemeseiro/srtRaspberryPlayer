@@ -92,14 +92,43 @@ systemctl status srt-player
 # Configurar audio HDMI
 echo "🔊 Configurando audio HDMI..."
 apt-get install -y alsa-utils
+
+# Configurar ALSA
+echo "🔊 Configurando ALSA..."
+cat > /etc/asound.conf << EOF
+pcm.!default {
+    type hw
+    card 0
+    device 1
+}
+
+ctl.!default {
+    type hw
+    card 0
+}
+EOF
+
+# Habilitar módulos de sonido y cargarlos
+echo "🔊 Habilitando módulos de sonido..."
+modprobe snd-bcm2835
 amixer cset numid=3 2  # 2 = HDMI, 1 = Analógico, 0 = Auto
 
-# Verificar configuración de audio
+# Verificar configuración de audio en config.txt
 echo "🔊 Verificando configuración de audio..."
 if ! grep -q "dtparam=audio=on" /boot/config.txt; then
     echo "dtparam=audio=on" >> /boot/config.txt
 fi
 
+# Añadir soporte gráfico y audio
+if ! grep -q "vc4-kms-v3d" /boot/config.txt; then
+    echo "dtoverlay=vc4-kms-v3d" >> /boot/config.txt
+fi
+
+# Configurar audio por defecto
+echo "🔊 Configurando audio por defecto..."
+cat > /etc/modprobe.d/alsa-base.conf << EOF
+options snd-bcm2835 index=0
+EOF
 
 echo "✨ Instalación completada!"
 echo "Para ver los logs en tiempo real: journalctl -u srt-player -f"
