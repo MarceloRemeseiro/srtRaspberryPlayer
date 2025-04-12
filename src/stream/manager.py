@@ -204,6 +204,9 @@ class StreamManager:
                     '-stats',
                     # Parámetros SRT básicos
                     '-i', srt_url,
+                    # Parámetros de sincronización
+                    '-vsync', '1',       # Sincronización de video
+                    '-async', '1',       # Sincronización de audio
                     # Video
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
@@ -213,10 +216,11 @@ class StreamManager:
                 # Añadir audio si está disponible
                 if self.has_audio:
                     ffmpeg_cmd.extend([
-                        # Audio
+                        # Audio con parámetros adicionales para sincronización
+                        '-af', 'aresample=async=1000',  # Resampleado adaptativo
                         '-f', 'alsa',
                         '-ac', '2',
-                        'sysdefault:CARD=vc4hdmi0'
+                        'sysdefault:CARD=vc4hdmi0'  # Usar el dispositivo HDMI específico
                     ])
                 
                 log("FFMPEG", "info", f"Comando: {' '.join(ffmpeg_cmd)}")
