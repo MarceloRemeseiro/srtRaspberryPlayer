@@ -10,12 +10,20 @@ class StreamManager:
         self.ffmpeg_process = None
         self.last_config_check = time.time()
         self.last_srt_url = None
+        self.last_ffmpeg_start = 0  # Timestamp del último inicio de FFmpeg
 
     def stop_ffmpeg(self):
         if self.ffmpeg_process:
             log("FFMPEG", "info", "Deteniendo FFmpeg")
-            self.ffmpeg_process.terminate()
-            self.ffmpeg_process.wait()
+            try:
+                self.ffmpeg_process.terminate()
+                self.ffmpeg_process.wait(timeout=3)
+            except Exception as e:
+                log("FFMPEG", "error", f"Error deteniendo FFmpeg: {e}")
+                try:
+                    self.ffmpeg_process.kill()
+                except:
+                    pass
             self.ffmpeg_process = None
 
     def stream_video(self):
@@ -44,18 +52,26 @@ class StreamManager:
                 return
         
         # Si tenemos URL SRT pero ffmpeg no está corriendo, iniciarlo
-        if self.last_srt_url and (not self.ffmpeg_process or self.ffmpeg_process.poll() is not None):
+        # Añadir protección para evitar reinicios frecuentes
+        if (self.last_srt_url and 
+            (not self.ffmpeg_process or 
+             (self.ffmpeg_process and self.ffmpeg_process.poll() is not None)) and
+            (current_time - self.last_ffmpeg_start > 5)):  # Esperar al menos 5 segundos entre reinicios
+            
             log("STREAM", "info", f"Iniciando reproducción con URL: {self.last_srt_url}")
             try:
+                # Actualizar timestamp antes de iniciar
+                self.last_ffmpeg_start = current_time
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-loglevel', 'info',
-                    '-fflags', 'nobuffer',
+                    '-fflags', 'nobuffer+discardcorrupt',  # Ignorar datos corruptos
                     '-flags', 'low_delay',
                     '-probesize', '32',                # Reducir tamaño de análisis
                     '-analyzeduration', '0',           # No analizar duración
-                    '-reorder_queue_size', '0',        # Desactivar reordenamiento
                     '-protocol_whitelist', 'file,udp,rtp,srt', # Protocolos permitidos
+                    '-skip_frame', 'noref',            # Saltar frames no referenciales
+                    '-re',                             # Leer a velocidad nativa
                     '-i', self.last_srt_url,
                     '-vf', 'scale=1920:1080',
                     '-pix_fmt', 'rgb565',
