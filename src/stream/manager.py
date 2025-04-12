@@ -192,12 +192,19 @@ class StreamManager:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando FFmpeg básico que ya está funcionando para video
+                # Comando FFmpeg optimizado para baja latencia y estabilidad de frames
                 ffmpeg_cmd = [
                     'ffmpeg',
-                    '-loglevel', 'warning',      # Ver solo advertencias y errores
-                    '-re',                       # Leer a velocidad nativa (importante para streaming)
+                    '-loglevel', 'warning',
+                    '-fflags', 'nobuffer+discardcorrupt',  # No buffering y descartar frames corruptos
+                    '-flags', 'low_delay',                # Priorizar baja latencia
+                    '-probesize', '32',                   # Reducir tamaño de sondeo
+                    '-analyzeduration', '0',              # No analizar duración
+                    '-re',                                # Leer a velocidad nativa
                     '-i', srt_url,
+                    '-threads', '2',                      # Limitar threads para evitar sobrecarga
+                    '-preset', 'ultrafast',               # Codificación más rápida
+                    '-tune', 'zerolatency',               # Optimizar para latencia cero
                     '-pix_fmt', 'rgb565',
                     '-f', 'fbdev',
                     '/dev/fb0'
@@ -207,10 +214,10 @@ class StreamManager:
                 if self.has_audio:
                     ffmpeg_cmd.extend([
                         '-f', 'alsa',
-                        '-ac', '2',              # 2 canales (estéreo)
-                        'sysdefault:CARD=vc4hdmi0'  # Dispositivo que funcionó en las pruebas
+                        '-ac', '2',
+                        'sysdefault:CARD=vc4hdmi0'
                     ])
-                    log("FFMPEG", "info", "Audio habilitado con dispositivo específico sysdefault:CARD=vc4hdmi0")
+                    log("FFMPEG", "info", "Audio habilitado con latencia reducida")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
