@@ -22,46 +22,54 @@ class StreamManager:
             self._test_video_output()
 
     def _check_audio_device(self):
-        """Verifica si hay dispositivos de audio disponibles mediante PulseAudio"""
+        """Verifica si hay dispositivos de audio disponibles mediante ALSA"""
         try:
-            # Forzar el inicio de PulseAudio
-            log("AUDIO", "info", "Verificando e iniciando PulseAudio...")
+            log("AUDIO", "info", "Verificando ALSA para audio HDMI...")
             
-            # Matar cualquier instancia actual y reiniciar limpio
+            # Crear/verificar configuración ALSA
             try:
-                subprocess.run(['pulseaudio', '--kill'], 
+                if not os.path.exists('/etc/asound.conf'):
+                    log("AUDIO", "info", "Creando configuración ALSA para HDMI...")
+                    with open('/etc/asound.conf', 'w') as f:
+                        f.write('pcm.!default {\n')
+                        f.write('    type hw\n')
+                        f.write('    card 0\n')
+                        f.write('    device 0\n')
+                        f.write('}\n\n')
+                        f.write('ctl.!default {\n')
+                        f.write('    type hw\n')
+                        f.write('    card 0\n')
+                        f.write('}\n')
+                    log("AUDIO", "success", "Configuración ALSA creada correctamente")
+                else:
+                    log("AUDIO", "info", "Configuración ALSA ya existe")
+            except Exception as e:
+                log("AUDIO", "warning", f"Error creando configuración ALSA: {e}")
+            
+            # Configurar HDMI como salida de audio
+            try:
+                subprocess.run(['amixer', 'cset', 'numid=3', '2'], 
                               stdout=subprocess.PIPE, 
-                              stderr=subprocess.PIPE,
-                              timeout=3)
-                log("AUDIO", "info", "Instancia previa de PulseAudio terminada")
-                time.sleep(1)
-            except Exception:
-                pass
-                
-            # Iniciar PulseAudio
+                              stderr=subprocess.PIPE)
+                log("AUDIO", "info", "HDMI configurado como salida de audio (amixer cset numid=3 2)")
+            except Exception as e:
+                log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
+            
+            # Verificar dispositivos ALSA
             try:
-                start_pulse = subprocess.run(['pulseaudio', '--start'], 
+                alsa_devices = subprocess.run(['aplay', '-l'], 
                                            stdout=subprocess.PIPE, 
                                            stderr=subprocess.PIPE,
-                                           timeout=5)
-                log("AUDIO", "info", "Comando para iniciar PulseAudio ejecutado")
-                time.sleep(2)  # Dar tiempo a que se inicie completamente
-            except Exception as e:
-                log("AUDIO", "warning", f"Error iniciando PulseAudio: {e}")
-            
-            # Verificar si está funcionando
-            try:
-                pulse_check = subprocess.run(['pulseaudio', '--check'], 
-                                           stdout=subprocess.PIPE, 
-                                           stderr=subprocess.PIPE)
+                                           text=True)
                 
-                if pulse_check.returncode == 0:
-                    log("AUDIO", "success", "PulseAudio está funcionando")
+                if "HDMI" in alsa_devices.stdout:
+                    log("AUDIO", "success", "Dispositivo HDMI encontrado en ALSA")
+                    return True
                 else:
-                    log("AUDIO", "warning", "PulseAudio no está funcionando a pesar de los intentos")
+                    log("AUDIO", "warning", f"No se encontró dispositivo HDMI en ALSA: {alsa_devices.stdout}")
             except Exception as e:
-                log("AUDIO", "warning", f"Error verificando PulseAudio: {e}")
-                
+                log("AUDIO", "warning", f"Error listando dispositivos ALSA: {e}")
+            
             # Configurar volumen al máximo
             try:
                 subprocess.run(['amixer', 'set', 'Master', '100%'], check=False,
@@ -70,24 +78,8 @@ class StreamManager:
             except Exception as e:
                 log("AUDIO", "warning", f"Error configurando volumen: {e}")
                 
-            # Verificar dispositivos de PulseAudio
-            try:
-                # Verificar los dispositivos de audio disponibles
-                pulse_list = subprocess.run(['pactl', 'list', 'sinks', 'short'], 
-                                           stdout=subprocess.PIPE, 
-                                           stderr=subprocess.PIPE,
-                                           text=True)
-                
-                if pulse_list.stdout:
-                    log("AUDIO", "success", f"Dispositivos PulseAudio: {pulse_list.stdout.strip()}")
-                    return True
-                else:
-                    log("AUDIO", "warning", "No se encontraron dispositivos PulseAudio")
-            except Exception as e:
-                log("AUDIO", "warning", f"Error listando dispositivos PulseAudio: {e}")
-            
             # Si llegamos aquí, igual consideramos que hay audio y lo intentamos
-            log("AUDIO", "info", "Asumiendo que hay audio disponible para intentar la reproducción")
+            log("AUDIO", "info", "Asumiendo que hay audio HDMI disponible para intentar la reproducción")
             return True
             
         except Exception as e:
@@ -204,12 +196,12 @@ class StreamManager:
             
             # Verificar que PulseAudio esté funcionando antes de iniciar FFmpeg
             try:
-                # Lanzar --start antes de cada intento (es inofensivo si ya está corriendo)
-                subprocess.run(['pulseaudio', '--start'], 
+                # Configurar HDMI como salida de audio
+                subprocess.run(['amixer', 'cset', 'numid=3', '2'], 
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                log("AUDIO", "info", "PulseAudio verificado antes de iniciar FFmpeg")
+                log("AUDIO", "info", "HDMI configurado como salida de audio antes de iniciar FFmpeg")
             except Exception as e:
-                log("AUDIO", "warning", f"Error verificando PulseAudio: {e}")
+                log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
                 # Comando exacto que funciona, sin modificar una sola letra o parámetro
@@ -221,13 +213,15 @@ class StreamManager:
                     '/dev/fb0'
                 ]
                 
-                # Añadir audio usando PulseAudio si está disponible
+                # Añadir audio usando ALSA si está disponible
                 if self.has_audio:
                     ffmpeg_cmd.extend([
-                        '-f', 'pulse',
-                        'default'
+                        '-f', 'alsa',
+                        '-ac', '2',     # 2 canales (estéreo)
+                        '-ar', '48000', # Frecuencia de muestreo compatible con HDMI
+                        'default'      # Usar el dispositivo default de ALSA (configurado para HDMI)
                     ])
-                    log("FFMPEG", "info", "Usando PulseAudio para salida de audio")
+                    log("FFMPEG", "info", "Usando ALSA con dispositivo default para salida de audio HDMI")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
