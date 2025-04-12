@@ -78,7 +78,7 @@ class StreamManager:
                     '--play-and-exit',
                     # Configuración de audio mejorada
                     '--aout=alsa',
-                    '--alsa-audio-device=default',  # Usar el dispositivo de audio por defecto
+                    '--alsa-audio-device=sysdefault:CARD=vc4hdmi0',  # Usar el dispositivo de audio por defecto
                     '--gain=1.0',  # Ganancia de audio normal
                     '--audio-filter=compressor',  # Mejor procesamiento de audio
                     # Configuración de video
