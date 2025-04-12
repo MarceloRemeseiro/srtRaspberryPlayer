@@ -198,9 +198,9 @@ class StreamManager:
                     ffmpeg_cmd.extend([
                         '-f', 'alsa',
                         '-ac', '2',       # 2 canales (estéreo)
-                        'default'         # Usar el dispositivo default de ALSA
+                        'sysdefault:CARD=vc4hdmi0'  # Dispositivo que funcionó en las pruebas
                     ])
-                    log("FFMPEG", "info", "Audio habilitado con dispositivo ALSA default")
+                    log("FFMPEG", "info", "Audio habilitado con dispositivo específico sysdefault:CARD=vc4hdmi0")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
