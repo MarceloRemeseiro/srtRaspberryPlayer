@@ -122,8 +122,13 @@ class StreamManager:
                 
         if current_time - self.last_config_check > CONFIG_CHECK_INTERVAL:
             log("STREAM", "info", f"Verificando configuración después de {CONFIG_CHECK_INTERVAL} segundos")
+            
+            # Obtener URL SRT actualizada
             srt_url = get_srt_url()
             self.last_config_check = current_time
+            
+            # Registrar la consulta
+            log("STREAM", "info", f"Estado de SRT_URL: {srt_url}")
             
             # Si hay una nueva URL SRT
             if srt_url:

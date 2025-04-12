@@ -131,6 +131,10 @@ def register_with_streaming_server(server_url):
         
         response = requests.post(register_url, json=data, timeout=5)
         
+        # Registrar la respuesta completa para depuración
+        log("STREAMING", "debug", f"Respuesta HTTP: {response.status_code}")
+        log("STREAMING", "debug", f"Cuerpo: {response.text[:100]}...")
+        
         if response.status_code not in [200, 409]:
             log("STREAMING", "error", f"Error {response.status_code}: {response.text}")
             device_status = 'OFFLINE'
@@ -139,14 +143,44 @@ def register_with_streaming_server(server_url):
         result = response.json()
         log("STREAMING", "info", f"Respuesta del servidor: {result}")
         
+        # Inspeccionar la estructura completa de la respuesta
+        for key, value in result.items():
+            log("STREAMING", "debug", f"Campo '{key}': {value}")
+        
         if result.get('success'):
             device_status = result.get('status', 'ONLINE')
             
-            # Actualizar URL SRT si está disponible
-            if result.get('streamingUrl'):
-                current_srt_url = result.get('streamingUrl')
+            # Buscar la URL SRT en diferentes campos (para manejar cambios en la API)
+            srt_url = None
+            
+            # Opciones de nombres de campos que pueden contener la URL SRT
+            url_fields = ['streamingUrl', 'srtUrl', 'url']
+            
+            # Buscar en campos principales
+            for field in url_fields:
+                if field in result and result[field]:
+                    srt_url = result[field]
+                    log("STREAMING", "success", f"URL SRT encontrada en '{field}': {srt_url}")
+                    break
+            
+            # Si no encontramos la URL en los campos principales, buscar en subcampos
+            if not srt_url and 'device' in result:
+                device_data = result['device']
+                for field in url_fields:
+                    if field in device_data and device_data[field]:
+                        srt_url = device_data[field]
+                        log("STREAMING", "success", f"URL SRT encontrada en 'device.{field}': {srt_url}")
+                        break
+            
+            # Actualizar URL SRT si la encontramos
+            if srt_url:
+                current_srt_url = srt_url
                 log("STREAMING", "success", f"URL SRT asignada: {current_srt_url}")
                 device_status = 'ACTIVE'
+            else:
+                log("STREAMING", "warning", "No se encontró URL SRT en la respuesta")
+                if current_srt_url:
+                    log("STREAMING", "info", f"Manteniendo URL SRT anterior: {current_srt_url}")
             
             log("STREAMING", "success", f"Estado: {device_status}")
             return True
@@ -218,11 +252,20 @@ def get_srt_url():
     
     # Actualizamos estado si es necesario
     if should_check_proxy():
-        register_device()
+        log("SRT", "info", "Verificando estado con el servidor...")
+        registered = register_device()
+        log("SRT", "info", f"Resultado de registro: {'Exitoso' if registered else 'Fallido'}")
     
     # Verificamos si tenemos URL y estado válido
     if current_srt_url and device_status in ['ACTIVE', 'assigned']:
+        log("SRT", "info", f"URL SRT disponible: {current_srt_url} (Estado: {device_status})")
         return current_srt_url
+    
+    # Registramos por qué no hay URL disponible
+    if not current_srt_url:
+        log("SRT", "info", "No hay URL SRT guardada")
+    elif device_status not in ['ACTIVE', 'assigned']:
+        log("SRT", "info", f"Estado no válido: {device_status}")
     
     log("SRT", "info", f"No hay URL SRT disponible - Estado: {device_status}")
     return None

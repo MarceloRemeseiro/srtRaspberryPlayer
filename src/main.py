@@ -42,7 +42,9 @@ def main():
     
     while True:
         try:
+            # Gestionar reproducción (se ejecuta en cada iteración)
             stream_manager.stream_video()
+            
         except Exception as e:
             log("SISTEMA", "error", f"Error en bucle principal: {e}")
         time.sleep(1)
