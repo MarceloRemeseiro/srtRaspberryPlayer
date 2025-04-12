@@ -380,4 +380,9 @@ class StreamManager:
             except Exception as e:
                 log("SISTEMA", "error", f"Error en bucle principal: {e}")
                 self._kill_existing_players()
-                time.sleep(5) 
+                time.sleep(5)
+
+    # Método requerido por main.py
+    def stop_ffmpeg(self):
+        """Método para compatibilidad con main.py"""
+        self.stop_player() 
