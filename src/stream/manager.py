@@ -194,17 +194,22 @@ class StreamManager:
         if not self.ffmpeg_process or (self.ffmpeg_process and self.ffmpeg_process.poll() is not None):
             log("STREAM", "info", f"Iniciando reproducción con SRT URL probada")
             
-            # Verificar que PulseAudio esté funcionando antes de iniciar FFmpeg
+            # Configurar HDMI como salida antes de iniciar FFmpeg
             try:
-                # Configurar HDMI como salida de audio
+                # Asegurar HDMI como salida principal
                 subprocess.run(['amixer', 'cset', 'numid=3', '2'], 
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 log("AUDIO", "info", "HDMI configurado como salida de audio antes de iniciar FFmpeg")
+                
+                # Asegurar que el volumen está al máximo
+                subprocess.run(['amixer', 'set', 'Master', '100%'],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                log("AUDIO", "info", "Volumen configurado al 100%")
             except Exception as e:
                 log("AUDIO", "warning", f"Error configurando HDMI como salida: {e}")
             
             try:
-                # Comando exacto que funciona, sin modificar una sola letra o parámetro
+                # Comando FFmpeg con ALSA directamente
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-i', fixed_srt_url,
@@ -213,15 +218,14 @@ class StreamManager:
                     '/dev/fb0'
                 ]
                 
-                # Añadir audio usando ALSA si está disponible
+                # Añadir audio usando ALSA directamente si está disponible
                 if self.has_audio:
                     ffmpeg_cmd.extend([
                         '-f', 'alsa',
-                        '-ac', '2',     # 2 canales (estéreo)
-                        '-ar', '48000', # Frecuencia de muestreo compatible con HDMI
-                        'default'      # Usar el dispositivo default de ALSA (configurado para HDMI)
+                        '-ac', '2',      # 2 canales (estéreo)
+                        'hw:0,0'         # Usar directamente el hardware HDMI (card 0, device 0)
                     ])
-                    log("FFMPEG", "info", "Usando ALSA con dispositivo default para salida de audio HDMI")
+                    log("FFMPEG", "info", "Usando ALSA directo hw:0,0 para salida de audio HDMI")
                 else:
                     ffmpeg_cmd.append('-an')
                     log("FFMPEG", "warning", "Audio desactivado (no hay dispositivo disponible)")
