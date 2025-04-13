@@ -247,17 +247,22 @@ class StreamManager:
                 f.write('# Script generado automáticamente para VLC con diagnóstico\n')
                 f.write(f'# Fecha: {time.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
                 
-                # Comando para usar cvlc (VLC sin interfaz gráfica)
-                f.write(f'cvlc "{srt_url}" \\\n')
+                # Configurar entorno para X11
+                f.write('export DISPLAY=:0\n')
+                f.write('export XAUTHORITY=/home/pi/.Xauthority\n\n')
+                
+                # Comando para VLC con interfaz gráfica
+                f.write(f'vlc "{srt_url}" \\\n')
                 f.write('  --fullscreen \\\n')
                 f.write('  --aout=alsa \\\n')
                 f.write('  --alsa-audio-device=default \\\n')
                 f.write('  --gain=1.0 \\\n')
-                f.write('  --no-video-title-show \\\n')
                 f.write('  --no-qt-privacy-ask \\\n')
                 f.write('  --no-keyboard-events \\\n')
                 f.write('  --sout-mux-caching=1500 \\\n')
-                f.write('  --no-osd \\\n')
+                f.write('  --vout=x11 \\\n')
+                f.write('  --x11-display=:0 \\\n')
+                f.write('  --no-embedded-video \\\n')
                 f.write('  --network-caching=1500 \\\n')
                 f.write('  --avcodec-hw=any \\\n')
                 f.write(f'  --logfile="{log_file}" \\\n')
