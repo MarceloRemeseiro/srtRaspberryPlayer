@@ -1,0 +1,21 @@
+[Unit]
+Description=SRT Player Service (VLC con usuario Pi)
+After=network.target lightdm.service
+Requires=lightdm.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/srtRaspberryPlayer
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/bin/python3 -u src/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target 

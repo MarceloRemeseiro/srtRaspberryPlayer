@@ -39,7 +39,7 @@ class StreamManager:
         # Iniciar captura de información del sistema
         self.start_system_monitoring()
         
-        log("SISTEMA", "info", f"StreamManager inicializado - Modo diagnóstico avanzado (sesión: {self.session_start})")
+        log("SISTEMA", "info", "StreamManager inicializado - Modo VLC")
 
     def create_debug_dir(self):
         """Crea el directorio para archivos de diagnóstico"""
@@ -232,82 +232,53 @@ class StreamManager:
         # Iniciar el reproductor de nuevo
         self.stream_video()
 
-    def start_via_shell_script(self, srt_url):
-        """Inicia el reproductor a través de un script shell independiente"""
-        log("SHELL", "info", f"Iniciando VLC a través de shell con URL: {srt_url}")
+    def start_vlc_player(self, srt_url):
+        """Inicia el reproductor VLC directo con la URL proporcionada"""
+        log("PLAYER", "info", f"Iniciando VLC directo con URL: {srt_url}")
         
         try:
-            # Crear un script shell temporal con opciones de debug
-            fd, script_path = tempfile.mkstemp(suffix='.sh')
-            self.script_path = script_path
-            log_file = os.path.join(self.session_dir, f"vlc_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+            # Configurar variables de entorno para X11
+            env = os.environ.copy()
+            env['DISPLAY'] = ':0'
+            env['XAUTHORITY'] = '/home/pi/.Xauthority'
             
-            with os.fdopen(fd, 'w') as f:
-                f.write('#!/bin/bash\n\n')
-                f.write('# Script generado automáticamente para VLC con diagnóstico\n')
-                f.write(f'# Fecha: {time.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
-                
-                # Configurar entorno para X11
-                f.write('export DISPLAY=:0\n')
-                f.write('export XAUTHORITY=/home/pi/.Xauthority\n\n')
-                
-                # Comando para VLC con interfaz gráfica
-                f.write(f'vlc "{srt_url}" \\\n')
-                f.write('  --fullscreen \\\n')
-                f.write('  --aout=alsa \\\n')
-                f.write('  --alsa-audio-device=default \\\n')
-                f.write('  --gain=1.0 \\\n')
-                f.write('  --no-qt-privacy-ask \\\n')
-                f.write('  --no-keyboard-events \\\n')
-                f.write('  --sout-mux-caching=1500 \\\n')
-                f.write('  --vout=x11 \\\n')
-                f.write('  --x11-display=:0 \\\n')
-                f.write('  --no-embedded-video \\\n')
-                f.write('  --network-caching=1500 \\\n')
-                f.write('  --avcodec-hw=any \\\n')
-                f.write(f'  --logfile="{log_file}" \\\n')
-                f.write('  --file-logging \\\n')
-                f.write('  --verbose=3\n')
-                
-                # Añadir código para recolectar información post-ejecución
-                f.write('\n# Información post-ejecución\n')
-                f.write('RESULT=$?\n')
-                f.write(f'echo "VLC terminó con código: $RESULT" >> "{log_file}"\n')
-                f.write(f'dmesg | tail -50 >> "{log_file}"\n')  # Últimas entradas del kernel
-                
-                # Eliminar el script después de ejecutarse
-                f.write('\n# Eliminar este script al terminar\n')
-                f.write(f'rm -f "{script_path}"\n')
+            # Iniciar VLC directamente
+            cmd = [
+                'vlc',
+                srt_url,
+                '--fullscreen',
+                '--no-video-title-show',
+                '--no-qt-privacy-ask',
+                '--no-keyboard-events',
+                '--no-osd',
+                '--aout=alsa',
+                '--alsa-audio-device=default',
+                '--gain=1.0',
+                '--network-caching=1500',
+                '--sout-mux-caching=1500',
+                '--vout=x11',
+                '--x11-display=:0'
+            ]
             
-            # Hacer el script ejecutable
-            os.chmod(script_path, 0o755)
-            
-            # Ejecutar el script en segundo plano
-            log("SHELL", "info", f"Ejecutando script: {script_path}")
             process = subprocess.Popen(
-                ['/bin/bash', script_path],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                # Desconectar completamente del proceso principal
+                env=env,
                 start_new_session=True
             )
             
-            log("SHELL", "info", f"Script iniciado con PID: {process.pid}")
+            log("PLAYER", "info", f"VLC iniciado con PID: {process.pid}")
             return process
             
         except Exception as e:
-            log("SHELL", "error", f"Error creando/ejecutando script: {e}")
-            if self.script_path and os.path.exists(self.script_path):
-                try:
-                    os.remove(self.script_path)
-                except:
-                    pass
+            log("PLAYER", "error", f"Error iniciando VLC: {e}")
             return None
 
     def stream_video(self):
-        # Para pruebas, usar URL directa en lugar de obtenerla del servidor
-        srt_url = self.test_url  # URL de prueba fija
-        log("PRUEBA", "info", f"Usando URL de prueba: {srt_url}")
+        # Para pruebas, usar URL directa
+        srt_url = self.test_url
+        log("STREAM", "info", f"Usando URL: {srt_url}")
         
         # Si el reproductor no está corriendo, iniciarlo
         if not self.player_process or self.player_process.poll() is not None:
@@ -318,63 +289,31 @@ class StreamManager:
                 # Reconfigurar audio
                 self._setup_audio()
                 
-                # Iniciar VLC mediante script shell independiente
-                log("PRUEBA", "info", "Iniciando VLC mediante script shell independiente")
-                self.player_process = self.start_via_shell_script(srt_url)
+                # Iniciar VLC
+                log("STREAM", "info", "Iniciando VLC")
+                self.player_process = self.start_vlc_player(srt_url)
                 
                 if not self.player_process:
                     log("STREAM", "error", "No se pudo iniciar el reproductor")
                     return
                 
-                # Registrar tiempo de inicio
-                self.start_time = time.time()
-                log("PRUEBA", "info", f"Script iniciado a las {time.strftime('%H:%M:%S')}")
-                
-                # Programar reinicio automático preventivo
-                self.auto_restart_timer = threading.Timer(self.auto_restart_seconds, self._auto_restart)
-                self.auto_restart_timer.daemon = True
-                self.auto_restart_timer.start()
-                log("AUTO", "info", f"Programado reinicio automático en {self.auto_restart_seconds} segundos")
+                log("STREAM", "info", f"VLC iniciado a las {time.strftime('%H:%M:%S')}")
                 
             except Exception as e:
                 log("STREAM", "error", f"Error iniciando reproductor: {e}")
                 self.player_process = None
 
     def run(self):
-        """Bucle principal de ejecución simplificado para pruebas"""
-        start_iteration = 0
+        """Bucle principal de ejecución simplificado"""
+        self.stream_video()
         
         while True:
             try:
-                # Iniciar la reproducción si no está en curso
-                if not self.player_process or self.player_process.poll() is not None:
-                    if self.player_process and self.player_process.poll() is not None:
-                        runtime = time.time() - self.start_time
-                        log("PRUEBA", "info", f"Proceso terminado después de {int(runtime)} segundos con código: {self.player_process.poll()}")
-                        # Recolectar información sobre la finalización
-                        self.collect_system_info()
-                    
+                # Verificar si el reproductor sigue activo
+                if self.player_process and self.player_process.poll() is not None:
+                    log("STREAM", "info", f"VLC terminó con código: {self.player_process.poll()}")
+                    # Reiniciar el reproductor si termina
                     self.stream_video()
-                    start_iteration += 1
-                else:
-                    # Verificar cuánto tiempo lleva ejecutándose
-                    runtime = time.time() - self.start_time
-                    if int(runtime) % 30 == 0:  # Registrar cada 30 segundos
-                        log("PRUEBA", "info", f"Proceso lleva {int(runtime)} segundos ejecutándose")
-                        
-                        # Verificar si VLC sigue ejecutándose
-                        vlc_check = subprocess.run(
-                            "pgrep vlc", 
-                            shell=True, 
-                            stdout=subprocess.PIPE, 
-                            stderr=subprocess.PIPE
-                        )
-                        
-                        if vlc_check.returncode != 0:
-                            log("PRUEBA", "warning", "No se encontró proceso VLC a pesar de que el script sigue ejecutándose")
-                            # Forzar reinicio
-                            self.stop_player()
-                            self.stream_video()
                 
                 # Dormir para no consumir CPU
                 time.sleep(1)
@@ -384,7 +323,7 @@ class StreamManager:
                 self._kill_existing_players()
                 time.sleep(5)
 
-    # Método requerido por main.py
+    # Método para compatibilidad con main.py
     def stop_ffmpeg(self):
         """Método para compatibilidad con main.py"""
         self.stop_player() 
