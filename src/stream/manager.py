@@ -250,7 +250,7 @@ class StreamManager:
     '--no-video-title-show',
     '--no-keyboard-events',
     '--aout=alsa',
-    '--alsa-audio-device=default',
+    '--alsa-audio-device=sysdefault:CARD=vc4hdmi0',
     '--no-osd',
     '--network-caching=1500',
     '--vout=drm',  # Usar vout=drm en lugar de x11
