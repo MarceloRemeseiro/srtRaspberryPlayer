@@ -244,21 +244,17 @@ class StreamManager:
             
             # Iniciar VLC directamente
             cmd = [
-                'vlc',
-                srt_url,
-                '--fullscreen',
-                '--no-video-title-show',
-                '--no-qt-privacy-ask',
-                '--no-keyboard-events',
-                '--no-osd',
-                '--aout=alsa',
-                '--alsa-audio-device=default',
-                '--gain=1.0',
-                '--network-caching=1500',
-                '--sout-mux-caching=1500',
-                '--vout=x11',
-                '--x11-display=:0'
-            ]
+    'cvlc',  # Usar cvlc en lugar de vlc (sin interfaz)
+    srt_url,
+    '--fullscreen',
+    '--no-video-title-show',
+    '--no-keyboard-events',
+    '--aout=alsa',
+    '--alsa-audio-device=default',
+    '--no-osd',
+    '--network-caching=1500',
+    '--vout=drm',  # Usar vout=drm en lugar de x11
+]
             
             process = subprocess.Popen(
                 cmd,
