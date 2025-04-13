@@ -21,7 +21,7 @@ class StreamManager:
         self.script_path = None
         
         # Configuración para diagnóstico
-        self.debug_dir = "/tmp/srt-player-debug"
+        self.debug_dir = "/home/pi/srt-player-debug"
         self.create_debug_dir()
         
         # Limpieza inicial
@@ -143,9 +143,9 @@ class StreamManager:
     def _kill_existing_players(self):
         """Mata cualquier proceso de reproducción existente"""
         try:
-            subprocess.run(['pkill', '-9', 'mpv'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             subprocess.run(['pkill', '-9', 'vlc'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             subprocess.run(['pkill', '-9', 'cvlc'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            subprocess.run(['pkill', '-9', 'mpv'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             subprocess.run(['pkill', '-9', 'ffmpeg'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             # Terminar cualquier script shell activo
             if self.script_path and os.path.exists(self.script_path):
@@ -234,43 +234,40 @@ class StreamManager:
 
     def start_via_shell_script(self, srt_url):
         """Inicia el reproductor a través de un script shell independiente"""
-        log("SHELL", "info", f"Iniciando MPV a través de shell con URL: {srt_url}")
+        log("SHELL", "info", f"Iniciando VLC a través de shell con URL: {srt_url}")
         
         try:
             # Crear un script shell temporal con opciones de debug
             fd, script_path = tempfile.mkstemp(suffix='.sh')
             self.script_path = script_path
-            log_file = os.path.join(self.session_dir, f"mpv_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+            log_file = os.path.join(self.session_dir, f"vlc_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
             
             with os.fdopen(fd, 'w') as f:
                 f.write('#!/bin/bash\n\n')
-                f.write('# Script generado automáticamente para MPV con diagnóstico\n')
+                f.write('# Script generado automáticamente para VLC con diagnóstico\n')
                 f.write(f'# Fecha: {time.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
                 
-                # Comando MPV optimizado para Raspberry Pi con aceleración hardware
-                f.write(f'mpv "{srt_url}" \\\n')
+                # Comando para usar cvlc (VLC sin interfaz gráfica)
+                f.write(f'cvlc "{srt_url}" \\\n')
                 f.write('  --fullscreen \\\n')
-                f.write('  --audio-device=alsa/sysdefault:CARD=vc4hdmi0 \\\n')
-                f.write('  --volume=100 \\\n')
-                f.write('  --msg-level=all=debug \\\n')  # Modo debug para todos los módulos
-                f.write(f'  --log-file="{log_file}" \\\n')  # Archivo de log detallado
-                f.write('  --hwdec=mmal \\\n')  # Aceleración hardware específica para Raspberry Pi
-                f.write('  --vo=rpi \\\n')  # Output de video específico para Raspberry Pi
-                f.write('  --cache=yes \\\n')  # Activar caché
-                f.write('  --cache-secs=5 \\\n')  # Caché de 5 segundos (más conservador)
-                f.write('  --demuxer-max-bytes=20MiB \\\n')  # Buffer para el demuxer
-                f.write('  --network-timeout=10 \\\n')  # Tiempo de espera de red
-                f.write('  --srt-latency=2000 \\\n')  # Latencia SRT específica
-                f.write('  --vd-lavc-threads=2 \\\n')  # Limitar hilos de decodificación
-                f.write('  --idle=once \\\n')  # Mantener vivo brevemente si hay errores
-                f.write('  --untimed \\\n')  # Útil para streams con problemas de temporización
-                f.write('  --no-resume-playback \\\n')  # No reanudar la reproducción
-                f.write('  --keep-open=no\n')  # No quedarse abierto al terminar
+                f.write('  --aout=alsa \\\n')
+                f.write('  --alsa-audio-device=default \\\n')
+                f.write('  --gain=1.0 \\\n')
+                f.write('  --no-video-title-show \\\n')
+                f.write('  --no-qt-privacy-ask \\\n')
+                f.write('  --no-keyboard-events \\\n')
+                f.write('  --sout-mux-caching=1500 \\\n')
+                f.write('  --no-osd \\\n')
+                f.write('  --network-caching=1500 \\\n')
+                f.write('  --avcodec-hw=any \\\n')
+                f.write(f'  --logfile="{log_file}" \\\n')
+                f.write('  --file-logging \\\n')
+                f.write('  --verbose=3\n')
                 
                 # Añadir código para recolectar información post-ejecución
                 f.write('\n# Información post-ejecución\n')
                 f.write('RESULT=$?\n')
-                f.write(f'echo "MPV terminó con código: $RESULT" >> "{log_file}"\n')
+                f.write(f'echo "VLC terminó con código: $RESULT" >> "{log_file}"\n')
                 f.write(f'dmesg | tail -50 >> "{log_file}"\n')  # Últimas entradas del kernel
                 
                 # Eliminar el script después de ejecutarse
@@ -316,8 +313,8 @@ class StreamManager:
                 # Reconfigurar audio
                 self._setup_audio()
                 
-                # Iniciar MPV mediante script shell independiente
-                log("PRUEBA", "info", "Iniciando MPV mediante script shell independiente")
+                # Iniciar VLC mediante script shell independiente
+                log("PRUEBA", "info", "Iniciando VLC mediante script shell independiente")
                 self.player_process = self.start_via_shell_script(srt_url)
                 
                 if not self.player_process:
@@ -360,16 +357,16 @@ class StreamManager:
                     if int(runtime) % 30 == 0:  # Registrar cada 30 segundos
                         log("PRUEBA", "info", f"Proceso lleva {int(runtime)} segundos ejecutándose")
                         
-                        # Verificar si MPV sigue ejecutándose
-                        mpv_check = subprocess.run(
-                            "pgrep mpv", 
+                        # Verificar si VLC sigue ejecutándose
+                        vlc_check = subprocess.run(
+                            "pgrep vlc", 
                             shell=True, 
                             stdout=subprocess.PIPE, 
                             stderr=subprocess.PIPE
                         )
                         
-                        if mpv_check.returncode != 0:
-                            log("PRUEBA", "warning", "No se encontró proceso MPV a pesar de que el script sigue ejecutándose")
+                        if vlc_check.returncode != 0:
+                            log("PRUEBA", "warning", "No se encontró proceso VLC a pesar de que el script sigue ejecutándose")
                             # Forzar reinicio
                             self.stop_player()
                             self.stream_video()

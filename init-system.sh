@@ -32,8 +32,7 @@ apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-requests \
-    mpv \
-    ffmpeg \
+    vlc \
     alsa-utils
 
 # Configurar framebuffer para vc4-fkms-v3d
@@ -150,6 +149,46 @@ echo "🔊 Configurando audio por defecto..."
 cat > /etc/modprobe.d/alsa-base.conf << EOF
 options snd-bcm2835 index=0
 EOF
+
+# Configuración para usar VLC con usuario pi
+
+# 1. Crear directorio de debug
+mkdir -p /home/pi/srt-player-debug
+chown pi:pi /home/pi/srt-player-debug
+
+# 2. Asegurar que VLC está instalado
+apt-get update && apt-get install -y vlc
+
+# 3. Configurar servicio systemd para usuario pi
+cat > /etc/systemd/system/srt-player-user.service << 'EOF'
+[Unit]
+Description=SRT Player Service (User Mode)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/srtRaspberryPlayer
+ExecStart=/usr/bin/python3 -u src/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 4. Recargar systemd y configurar servicios
+systemctl daemon-reload
+systemctl stop srt-player
+systemctl disable srt-player
+systemctl enable srt-player-user
+systemctl start srt-player-user
+
+# 5. Verificar estado
+systemctl status srt-player-user
 
 echo -e "${GREEN}=== Instalación completada ===${NC}"
 echo -e "${GREEN}MPV configurado correctamente para reproducción de streams SRT${NC}"
