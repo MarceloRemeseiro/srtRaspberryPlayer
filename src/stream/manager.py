@@ -244,27 +244,53 @@ class StreamManager:
             
             # Iniciar VLC directamente
             cmd = [
-    'cvlc',  # Usar cvlc en lugar de vlc (sin interfaz)
-    srt_url,
-    '--fullscreen',
-    '--no-video-title-show',
-    '--no-keyboard-events',
-    '--aout=alsa',
-    '--alsa-audio-device=sysdefault:CARD=vc4hdmi0',
-    '--no-osd',
-    '--network-caching=1500',
-    '--vout=drm',  # Usar vout=drm en lugar de x11
-]
+                'cvlc',  # Usar cvlc en lugar de vlc (sin interfaz)
+                srt_url,
+                '--fullscreen',
+                '--no-video-title-show',
+                '--no-keyboard-events',
+                '--aout=alsa',
+                '--alsa-audio-device=sysdefault:CARD=vc4hdmi0',  # Dispositivo HDMI específico
+                '--no-osd',
+                '--network-caching=3000',  # Aumentado de 1500 a 3000
+                '--file-caching=3000',     # Añadido caché para archivos
+                '--live-caching=3000',     # Añadido caché para streaming en vivo
+                '--sout-mux-caching=3000', # Caché para multiplexor
+                '--no-video-deco',         # Deshabilitar decoraciones
+                '--vout=drm',              # Usar DRM para salida de video
+                '--quiet',                 # Menos mensajes
+            ]
+            
+            # Recopilar salida estándar y de error para diagnóstico
+            stderr_file = os.path.join(self.session_dir, f"vlc_stderr_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+            stdout_file = os.path.join(self.session_dir, f"vlc_stdout_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+            
+            # Abrir archivos para capturar salida
+            stderr_fd = open(stderr_file, 'w')
+            stdout_fd = open(stdout_file, 'w')
+            
+            # Guardar tiempo de inicio
+            self.start_time = time.time()
             
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=stdout_fd,
+                stderr=stderr_fd,
                 env=env,
                 start_new_session=True
             )
             
             log("PLAYER", "info", f"VLC iniciado con PID: {process.pid}")
+            
+            # Programar el reinicio automático
+            if self.auto_restart_timer:
+                self.auto_restart_timer.cancel()
+            
+            self.auto_restart_timer = threading.Timer(self.auto_restart_seconds, self._auto_restart)
+            self.auto_restart_timer.daemon = True
+            self.auto_restart_timer.start()
+            log("AUTO", "info", f"Reinicio automático programado en {self.auto_restart_seconds} segundos")
+            
             return process
             
         except Exception as e:
